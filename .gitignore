@@ -1,5 +1,11 @@
+<<<<<<< HEAD
 # .gitignore
 
 venv/
 .idea/
 data/
+=======
+__pycache__
+logs
+.idea
+>>>>>>> master

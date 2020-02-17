@@ -2,10 +2,10 @@ import os
 import pandas as pd
 import numpy as np
 import pickle
-#path = '/home/sonu/data/root/train/'
-path = '/home/expumn_gmail_com/mimic3-text/mimic3-benchmarks/data/root/test/'
-#starttime_path = '/home/sonu/data/starttime.pkl'
-test_starttime_path = '/home/expumn_gmail_com/mimic3-text/mimic3-benchmarks/data/test_starttime.pkl'
+path = '../mimic3-benchmarks/data/root/train/'
+#path = '../mimic3-benchmarks/data/root/test/'
+starttime_path = '../mimic3-benchmarks/data/starttime.pkl'
+# starttime_path = '../mimic3-benchmarks/data/test_starttime.pkl'
 episodeToStartTimeMapping = {}
 
 
@@ -19,7 +19,10 @@ def diff(time1, time2):
 
 for findex, folder in enumerate(os.listdir(path)):
     events_path = os.path.join(path, folder, 'events.csv')
-    events = pd.read_csv(events_path)
+    try:
+        events = pd.read_csv(events_path)
+    except:
+        print("Couldn't load events.csv for {} - skipping".format(findex))
 
     stays_path = os.path.join(path, folder, 'stays.csv')
     stays_df = pd.read_csv(stays_path)
@@ -45,5 +48,5 @@ for findex, folder in enumerate(os.listdir(path)):
     if findex % 100 == 0:
         print("Processed %d" % (findex + 1))
 
-with open(test_starttime_path, 'wb') as f:
+with open(starttime_path, 'wb') as f:
     pickle.dump(episodeToStartTimeMapping, f, pickle.HIGHEST_PROTOCOL)
