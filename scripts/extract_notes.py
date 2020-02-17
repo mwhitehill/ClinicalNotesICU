@@ -109,7 +109,7 @@ def preprocess_mimic(text):
             yield text.lower()
 
 
-df = pd.read_csv('/mnt/disks/mimic3/data/data/NOTEEVENTS.csv')
+df = pd.read_csv('../cse517_project/data/mimic-iii-clinical-database-1.4/NOTEEVENTS.csv')
 df.CHARTDATE = pd.to_datetime(df.CHARTDATE)
 df.CHARTTIME = pd.to_datetime(df.CHARTTIME)
 df.STORETIME = pd.to_datetime(df.STORETIME)
@@ -152,11 +152,12 @@ min        1.000000      1.000000      1.000000
 max     1214.000000   1214.000000   1214.000000
 '''
 
-dataset_path = '/home/expumn_gmail_com/mimic3-text/mimic3-benchmarks/data/root/test/'
+dataset_path = '../mimic3-benchmarks/data/root/train/'
 all_files = os.listdir(dataset_path)
 all_folders = list(filter(lambda x: x.isdigit(), all_files))
 
-output_folder = '/home/expumn_gmail_com/mimic3-text/mimic3-benchmarks/data/root/test_text_fixed/'
+output_folder = '../mimic3-benchmarks/data/root/train_text_fixed/'
+os.makedirs(output_folder, exist_ok=True)
 
 suceed = 0
 failed = 0
@@ -198,6 +199,8 @@ for folder in all_folders:
                 json.dump(data_json, f)
 
         suceed += 1
+        if suceed%10 ==0:
+            print("Completed: {:.2f}%".format(100*(suceed/len(all_folders))), "| Finished:", suceed + failed, "out of", len(all_folders))
     except:
         import traceback
         traceback.print_exc()
@@ -209,5 +212,5 @@ print("No Notes for Patients: %d/%d" % (failed, len(all_folders)))
 print("Failed with Exception: %d/%d" % (failed_exception, len(all_folders)))
 
 
-with open(os.path.join(output_folder, 'test_hadm_id2index'), 'w') as f:
+with open(os.path.join(output_folder, 'train_hadm_id2index'), 'w') as f:
     json.dump(hadm_id2index, f)
