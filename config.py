@@ -2,7 +2,7 @@ import os
 import sys
 
 # Make sure can find the other repos
-sys.path.append(os.path.join(os.path.dirname(os.getcwd()),'mimic3-benchmarks'))
+sys.path.append(os.path.join(os.path.dirname(os.getcwd()), 'mimic3-benchmarks'))
 sys.path.append(os.getcwd())
 
 class Config():

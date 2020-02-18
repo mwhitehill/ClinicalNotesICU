@@ -1,23 +1,21 @@
-from config import Config
-from mimic3models import common_utils
+from mimic3models.in_hospital_mortality import utils as ihm_utils
 from mimic3models.preprocessing import Discretizer, Normalizer
 from mimic3benchmark.readers import InHospitalMortalityReader
-from mimic3models.in_hospital_mortality import utils as ihm_utils
+from mimic3models import common_utils
+from tensorflow.contrib import rnn
+from models import utils
+import tensorflow as tf
+import numpy as np
+import random
+import sys
+import os
+
 '''
 In intensive care units, where patients come in with a wide range of health conditions, 
 triaging relies heavily on clinical judgment. ICU staff run numerous physiological tests, 
 such as bloodwork and checking vital signs, 
 to determine if patients are at immediate risk of dying if not treated aggressively.
 '''
-
-import utils
-import tensorflow as tf
-from tensorflow.contrib import rnn
-import pickle
-import numpy as np
-import sys
-import random
-import os
 
 tf.logging.set_verbosity(tf.logging.INFO)
 tf.logging.info("*** Loaded Data ***")
@@ -27,6 +25,7 @@ args = utils.get_args()
 log = utils.get_logger(args['log_file'])
 vectors, word2index_lookup = utils.get_embedding_dict(conf)
 lookup = utils.lookup
+
 # let's set pad token to zero padding instead of random padding.
 # might be better for attention as it will give minimum value.
 if conf.padding_type == 'Zero':
@@ -52,8 +51,8 @@ embeds = tf.nn.embedding_lookup(W, text)
 
 hidden_units = vectors.shape[1]
 
-#avg_word_embedding_mode = bool(int(args['avg_we_model']))
-#baseline = bool(int(args['baseline']))
+# avg_word_embedding_mode = bool(int(args['avg_we_model']))
+# baseline = bool(int(args['baseline']))
 
 model_name = args['model_name']
 assert model_name in ['baseline', 'avg_we', 'transformer', 'cnn', 'text_only']
@@ -108,7 +107,7 @@ rnn_outputs, _ = tf.nn.dynamic_rnn(rnn_cell, X,
                                    time_major=False,
                                    dtype=tf.float32)
 
-#mean_rnn_outputs = tf.math.reduce_mean(rnn_outputs, axis=1, keepdims=False)
+# mean_rnn_outputs = tf.math.reduce_mean(rnn_outputs, axis=1, keepdims=False)
 mean_rnn_outputs = rnn_outputs[:, -1, :]
 if model_name == 'baseline':
     logit_X = mean_rnn_outputs
@@ -372,7 +371,7 @@ with tf.Session(config=gpu_config) as sess:
         last_best_val_aucpr, changed = validate(eval_data_X, eval_data_y, eval_data_text,
                                                 batch_size, word2index_lookup, sess, saver, last_best_val_aucpr,
                                                 loss, val_aucpr, val_aucroc, update_val_aucpr_op, update_val_aucroc_op, True)
-        if changed == False:
+        if not changed:
             early_stopping += 1
             tf.logging.info("Didn't improve!: " + str(early_stopping))
         else:

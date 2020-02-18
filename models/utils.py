@@ -1,19 +1,20 @@
-import json
-import pandas as pd
-import os
-import config
-import tensorflow as tf
-from sklearn import metrics
-import logging
-import pickle
-import argparse
-import sys
-import numpy as np
 from matplotlib import pyplot
 from datetime import datetime
-sys.path.insert(0, '..')
+from sklearn import metrics
+import tensorflow as tf
+import pandas as pd
+import numpy as np
+import argparse
+import logging
+import pickle
+import config
+import json
+import sys
+import os
 
+sys.path.insert(0, '..')
 time_string = datetime.now().strftime('%Y.%m.%d_%H-%M-%S')
+
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -27,7 +28,7 @@ def get_args():
     parser.add_argument(
         "--checkpoint_path", help="Path for checkpointing")
     parser.add_argument(
-        "--mode", help="train/test/eval")
+        "--mode", help="train/test/eval", default='train')
     parser.add_argument(
         "--problem_type", help="los/decom")
     parser.add_argument("--decay", default="0")
@@ -55,7 +56,7 @@ def get_embedding_dict(conf):
     with open(conf.index2word_path, 'rb') as f:
         word2index_lookup = pickle.load(f)
 
-    vectors = np.load(conf.wv_path) #'wv.model.vectors.npy')
+    vectors = np.load(conf.wv_path)  # 'wv.model.vectors.npy'
 
     return vectors, word2index_lookup
 
@@ -87,7 +88,7 @@ def lookup(w2i_lookup, x):
         return len(w2i_lookup)
 
 
-class AUCPR():
+class AUCPR:
     def __init__(self, *args, **kwargs):
         self.y_true = None
         self.y_pred = None
@@ -115,7 +116,7 @@ class AUCPR():
             pickle.dump((self.y_pred, self.y_true), f, pickle.HIGHEST_PROTOCOL)
 
 
-class MetricPerHour():
+class MetricPerHour:
     def __init__(self):
         self.y_true_hr = {}
         self.pred_hr = {}
