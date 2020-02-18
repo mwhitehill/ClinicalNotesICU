@@ -46,8 +46,9 @@ dropout_keep_prob = tf.placeholder(dtype=tf.float32, name='dropout_kp')
 T = tf.placeholder(dtype=tf.int32)
 N = tf.placeholder(dtype=tf.int32)
 
-W = tf.get_variable(name="W", shape=vectors.shape,
-                    initializer=tf.constant_initializer(vectors), trainable=False)
+W_place = tf.placeholder(tf.float32, shape=vectors.shape, name='W_place')
+W = tf.Variable(W_place, name="W", trainable=False, shape = vectors.shape)
+# W = tf.get_variable(name="W", shape=vectors.shape, initializer=tf.constant_initializer(vectors), trainable=False)
 embeds = tf.nn.embedding_lookup(W, text)
 
 hidden_units = vectors.shape[1]
@@ -268,7 +269,8 @@ def validate(data_X_val, data_y_val, data_text_val, batch_size, word2index_looku
         fd = {X: v_batch[0], y: v_batch[1],
               text: v_batch[2], dropout_keep_prob: 1,
               T: v_batch[2].shape[1],
-              N: v_batch[2].shape[0]}
+              N: v_batch[2].shape[0],
+              W_place: vectors}
         loss_value, _, _, probablities = sess.run(
             [loss, update_val_aucpr_op, update_val_aucroc_op, probs], fd)
         loss_list.append(loss_value)
@@ -346,7 +348,8 @@ with tf.Session(config=gpu_config) as sess:
             fd = {X: batch[0], y: batch[1],
                   text: batch[2], dropout_keep_prob: conf.dropout,
                   T: batch[2].shape[1],
-                  N: batch[2].shape[0]}
+                  N: batch[2].shape[0],
+                  W_place: vectors}
             _, loss_value, aucpr_value, aucroc_value = sess.run(
                 [train_op, loss, update_aucpr_op, update_aucroc_op], fd)
             loss_list.append(loss_value)

@@ -52,10 +52,21 @@ def get_embedding_dict(conf):
     # word2index_lookup = {word: index for index, word in enumerate(index2word_tensor)}
     # vectors = data["model"]["vectors"]
 
-    with open(conf.index2word_path, 'rb') as f:
-        word2index_lookup = pickle.load(f)
 
-    vectors = np.load(conf.wv_path) #'wv.model.vectors.npy')
+    with open("index2word_small.pkl", 'rb') as f:
+        word2index_lookup = pickle.load(f)
+    vectors = np.load('vectors_small.npy')  # 'wv.model.vectors.npy')
+
+    # with open(conf.index2word_path, 'rb') as f:
+    #     word2index_lookup = pickle.load(f)
+
+    # from gensim.models import KeyedVectors
+    # print("starting load wv")
+    # model = KeyedVectors.load("wv.model")
+    # print("loaded wv")
+    # vectors = model.vectors
+    # vectors = np.load(conf.wv_path) #'wv.model.vectors.npy')
+
 
     return vectors, word2index_lookup
 
@@ -70,7 +81,7 @@ def get_logger(log_file):
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
     conf = get_config()
-    os.makedirs(conf.log_folder)
+    os.makedirs(conf.log_folder,exist_ok=True)
 
     # create file handler which logs even debug messages
     fh = logging.FileHandler(os.path.join(conf.log_folder, log_file))

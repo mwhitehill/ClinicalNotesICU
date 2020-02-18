@@ -1,3 +1,6 @@
 __pycache__
 logs
 .idea
+*.pkl
+*.model
+*.npy
