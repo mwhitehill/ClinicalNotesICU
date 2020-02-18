@@ -18,14 +18,20 @@ import numpy as np
 import sys
 import random
 import os
+from datetime import datetime
 
 tf.logging.set_verbosity(tf.logging.INFO)
 tf.logging.info("*** Loaded Data ***")
 
 conf = utils.get_config()
 args = utils.get_args()
-log = utils.get_logger(args['log_file'])
-vectors, word2index_lookup = utils.get_embedding_dict(conf)
+
+time_string = datetime.now().strftime('%Y.%m.%d_%H-%M-%S')
+log_folder = os.path.join(conf.log_folder, time_string)
+os.makedirs(log_folder, exist_ok=True)
+
+log = utils.get_logger(log_folder, args['log_file'])
+vectors, word2index_lookup = utils.get_embedding_dict(conf, args['TEST'])
 lookup = utils.lookup
 # let's set pad token to zero padding instead of random padding.
 # might be better for attention as it will give minimum value.
@@ -46,7 +52,7 @@ dropout_keep_prob = tf.placeholder(dtype=tf.float32, name='dropout_kp')
 T = tf.placeholder(dtype=tf.int32)
 N = tf.placeholder(dtype=tf.int32)
 
-W_place = tf.placeholder(tf.float32, shape=vectors.shape, name='W_place')
+W_place = tf.placeholder(shape=vectors.shape, dtype = tf.float32, name='W_place')
 W = tf.Variable(W_place, name="W", trainable=False, shape = vectors.shape)
 # W = tf.get_variable(name="W", shape=vectors.shape, initializer=tf.constant_initializer(vectors), trainable=False)
 embeds = tf.nn.embedding_lookup(W, text)
@@ -258,19 +264,18 @@ def generate_padded_batches(x, y, t, bs, w2i_lookup):
 
 def validate(data_X_val, data_y_val, data_text_val, batch_size, word2index_lookup,
              sess, saver, last_best_val_aucpr, loss, val_aucpr, val_aucroc,
-             update_val_aucpr_op, update_val_aucroc_op, save):
+             update_val_aucpr_op, update_val_aucroc_op, save, epoch=0):
     val_batches = generate_padded_batches(
         data_X_val, data_y_val, data_text_val, batch_size, word2index_lookup)
     loss_list = []
     aucpr_obj = utils.AUCPR()
     #sess.run(tf.variables_initializer([v for v in tf.local_variables() if 'valid_metric' in v.name]))
-    sess.run(tf.local_variables_initializer())
+    sess.run(tf.local_variables_initializer(), {W_place: vectors})
     for v_batch in val_batches:
         fd = {X: v_batch[0], y: v_batch[1],
               text: v_batch[2], dropout_keep_prob: 1,
               T: v_batch[2].shape[1],
-              N: v_batch[2].shape[0],
-              W_place: vectors}
+              N: v_batch[2].shape[0]}
         loss_value, _, _, probablities = sess.run(
             [loss, update_val_aucpr_op, update_val_aucroc_op, probs], fd)
         loss_list.append(loss_value)
@@ -287,9 +292,8 @@ def validate(data_X_val, data_y_val, data_text_val, batch_size, word2index_looku
     if final_aucpr > last_best_val_aucpr:
         changed = True
         if save:
-            save_path = saver.save(sess, args['checkpoint_path'])
-            tf.logging.info(
-                "Best Model saved in path: %s" % save_path)
+            save_path = saver.save(sess, os.path.join(log_folder, 'ckpt_e{}'.format(epoch)))
+            tf.logging.info("Best Model saved in path: %s" % save_path)
     return max(last_best_val_aucpr, final_aucpr), changed
 
 
@@ -303,10 +307,10 @@ last_best_val_aucpr = -1
 gpu_config = tf.ConfigProto(device_count={'GPU': 1})
 
 with tf.Session(config=gpu_config) as sess:
-    sess.run(init)
+    sess.run(init, {W_place: vectors})
 
     if bool(int(args['load_model'])):
-        saver.restore(sess, args['checkpoint_path'])
+        saver.restore(sess, os.path.join('logs', args['checkpoint_path']))
         last_best_val_aucpr, _ = validate(eval_data_X, eval_data_y, eval_data_text,
                                           batch_size, word2index_lookup, sess, saver, last_best_val_aucpr,
                                           loss, val_aucpr, val_aucroc, update_val_aucpr_op, update_val_aucroc_op, False)
@@ -348,8 +352,7 @@ with tf.Session(config=gpu_config) as sess:
             fd = {X: batch[0], y: batch[1],
                   text: batch[2], dropout_keep_prob: conf.dropout,
                   T: batch[2].shape[1],
-                  N: batch[2].shape[0],
-                  W_place: vectors}
+                  N: batch[2].shape[0]}
             _, loss_value, aucpr_value, aucroc_value = sess.run(
                 [train_op, loss, update_aucpr_op, update_aucroc_op], fd)
             loss_list.append(loss_value)
@@ -367,14 +370,15 @@ with tf.Session(config=gpu_config) as sess:
         # reset aucroc and aucpr local variables
         # sess.run(tf.variables_initializer(
         #    [v for v in tf.local_variables() if 'train_metric' in v.name]))
-        sess.run(tf.local_variables_initializer())
+        sess.run(tf.local_variables_initializer(),{W_place: vectors})
         loss_list = []
 
         del batches
         tf.logging.info("Started Evaluation After Epoch : %d" % epoch)
         last_best_val_aucpr, changed = validate(eval_data_X, eval_data_y, eval_data_text,
                                                 batch_size, word2index_lookup, sess, saver, last_best_val_aucpr,
-                                                loss, val_aucpr, val_aucroc, update_val_aucpr_op, update_val_aucroc_op, True)
+                                                loss, val_aucpr, val_aucroc, update_val_aucpr_op, update_val_aucroc_op, True,
+                                                epoch=epoch)
         if changed == False:
             early_stopping += 1
             tf.logging.info("Didn't improve!: " + str(early_stopping))

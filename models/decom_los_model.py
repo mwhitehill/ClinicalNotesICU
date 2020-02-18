@@ -15,6 +15,7 @@ import random
 import os
 import sys
 import math
+from datetime import datetime
 
 from mimic3models.multitask import utils as mt_utils
 from mimic3benchmark.readers import MultitaskReader
@@ -27,8 +28,13 @@ tf.logging.info("*** Loaded Data ***")
 
 conf = utils.get_config()
 args = utils.get_args()
-log = utils.get_logger(args['log_file'])
-vectors, word2index_lookup = utils.get_embedding_dict(conf)
+
+time_string = datetime.now().strftime('%Y.%m.%d_%H-%M-%S')
+log_folder = os.path.join(conf.log_folder, time_string)
+os.makedirs(log_folder, exist_ok=True)
+
+log = utils.get_logger(log_folder, args['log_file'])
+vectors, word2index_lookup = utils.get_embedding_dict(conf, args['TEST'])
 lookup = utils.lookup
 
 model_name = args['model_name']
@@ -294,7 +300,8 @@ gpu_config = tf.ConfigProto(device_count={'GPU': 1})
 saver = tf.train.Saver()
 
 
-def validate(eval_data, sess, loss, val_aucpr, val_aucroc, update_val_aucpr_op, update_val_aucroc_op, save, last_best, saver):
+def validate(eval_data, sess, loss, val_aucpr, val_aucroc, update_val_aucpr_op, update_val_aucroc_op, save, last_best,
+             saver, epoch=0):
     loss_list = []
     # sess.run(tf.variables_initializer([v for v in tf.local_variables() if 'valid_metric' in v.name]))
     sess.run(tf.local_variables_initializer())
@@ -337,7 +344,7 @@ def validate(eval_data, sess, loss, val_aucpr, val_aucroc, update_val_aucpr_op, 
         if final_aucpr > last_best:
             changed = True
             if save:
-                save_path = saver.save(sess, args['checkpoint_path'])
+                save_path = saver.save(sess, os.path.join(log_folder, 'ckpt_e{}'.format(epoch)))
                 tf.logging.info(
                     "Best Model saved in path: %s" % save_path)
         return max(last_best, final_aucpr), changed
@@ -355,7 +362,7 @@ def validate(eval_data, sess, loss, val_aucpr, val_aucroc, update_val_aucpr_op, 
         if kappa_score > last_best:
             changed = True
             if save:
-                save_path = saver.save(sess, args['checkpoint_path'])
+                save_path = saver.save(sess, os.path.join(log_folder, 'ckpt_e{}'.format(epoch)))
                 tf.logging.info(
                     "Best Model saved in path: %s" % save_path)
         return max(last_best, kappa_score), changed
@@ -378,7 +385,7 @@ with tf.Session(config=gpu_config) as sess:
     sess.run(init)
 
     if bool(int(args['load_model'])):
-        saver.restore(sess, args['checkpoint_path'])
+        saver.restore(sess, os.path.join('logs', args['checkpoint_path']))
         if args['mode'] == 'train':
             tf.logging.info('Evaluating model to get the best yet.')
             last_best = validate(
@@ -451,7 +458,7 @@ with tf.Session(config=gpu_config) as sess:
         sess.run(tf.local_variables_initializer())
         last_best, changed = validate(eval_data, sess, loss, val_aucpr, val_aucroc,
                                       update_val_aucpr_op, update_val_aucroc_op, True,
-                                      last_best, saver)
+                                      last_best, saver, epoch=epoch)
         if changed == False:
             early_stopping_count += 1
             tf.logging.info("Didn't improve! : Count: " +

@@ -10,68 +10,52 @@ import argparse
 import sys
 import numpy as np
 from matplotlib import pyplot
+from gensim.models import KeyedVectors
 from datetime import datetime
 sys.path.insert(0, '..')
 
-time_string = datetime.now().strftime('%Y.%m.%d_%H-%M-%S')
+def get_config():
+    return config.Config()
 
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--load_model", help="1/0 to specify whether to load the model", default="0")
     parser.add_argument("--number_epoch", default="10")
     parser.add_argument("--batch_size", default="5")
-    parser.add_argument("--log_file", default='log_'+time_string)
+    parser.add_argument("--log_file", default='log')
+    parser.add_argument("--checkpoint_path", help="Path for checkpointing", default='ckpt')
     parser.add_argument("--evaluate_only")
-    parser.add_argument("--model_name", default='cnn',
-                        help="'baseline', 'avg_we', 'transformer', 'cnn', 'text_only'")
-    parser.add_argument(
-        "--checkpoint_path", help="Path for checkpointing")
-    parser.add_argument(
-        "--mode", help="train/test/eval")
-    parser.add_argument(
-        "--problem_type", help="los/decom")
+    parser.add_argument("--model_name", default='cnn', help="'baseline', 'avg_we', 'transformer', 'cnn', 'text_only'")
+    parser.add_argument("--mode", help="train/test/eval", default='train')
+    parser.add_argument("--problem_type", help="los/decom")
     parser.add_argument("--decay", default="0")
+    parser.add_argument("--TEST", action='store_true', default=False)
     args = vars(parser.parse_args())
     assert args['mode'] in ['train', 'test', 'eval']
     args['decay'] = float(args['decay'])
     return args
 
+def get_embedding_dict(conf, TEST):
 
-def get_config():
-    return config.Config()
+    # If testing, use the smaller files
+    if TEST:
+        with open("index2word_small.pkl", 'rb') as f:
+            word2index_lookup = pickle.load(f)
+        vectors = np.load('vectors_small.npy')  # 'wv.model.vectors.npy')
+    else:
+        with open(conf.index2word_path, 'rb') as f:
+            word2index_lookup = pickle.load(f)
 
-
-def get_embedding_dict(conf):
-
-    # with open(conf.model_path, 'rb') as f:
-    #     data = pickle.load(f)
-    #
-    # index2word_tensor = data["model"]["index2word"]
-    # index2word_tensor.pop()
-    # index2word_tensor.append('<pad>')
-    # word2index_lookup = {word: index for index, word in enumerate(index2word_tensor)}
-    # vectors = data["model"]["vectors"]
-
-
-    with open("index2word_small.pkl", 'rb') as f:
-        word2index_lookup = pickle.load(f)
-    vectors = np.load('vectors_small.npy')  # 'wv.model.vectors.npy')
-
-    # with open(conf.index2word_path, 'rb') as f:
-    #     word2index_lookup = pickle.load(f)
-
-    # from gensim.models import KeyedVectors
-    # print("starting load wv")
-    # model = KeyedVectors.load("wv.model")
-    # print("loaded wv")
-    # vectors = model.vectors
-    # vectors = np.load(conf.wv_path) #'wv.model.vectors.npy')
-
+        print("Started loading word vectors model")
+        model = KeyedVectors.load("wv.model")
+        print("Finished loading word vectors model")
+        vectors = model.vectors
+        # vectors = np.load(conf.wv_path) #'wv.model.vectors.npy')
 
     return vectors, word2index_lookup
 
 
-def get_logger(log_file):
+def get_logger(log_folder, log_file):
     # get TF logger
     log = logging.getLogger('tensorflow')
     log.setLevel(logging.DEBUG)
@@ -80,11 +64,8 @@ def get_logger(log_file):
     formatter = logging.Formatter(
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-    conf = get_config()
-    os.makedirs(conf.log_folder,exist_ok=True)
-
     # create file handler which logs even debug messages
-    fh = logging.FileHandler(os.path.join(conf.log_folder, log_file))
+    fh = logging.FileHandler(os.path.join(log_folder, log_file))
     fh.setLevel(logging.INFO)
     fh.setFormatter(formatter)
     log.addHandler(fh)
