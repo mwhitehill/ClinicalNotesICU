@@ -1,11 +1,8 @@
-<<<<<<< HEAD
-# .gitignore
-
-venv/
-.idea/
-data/
-=======
+venv/*
+.idea/*
+data/*
 __pycache__
 logs
-.idea
->>>>>>> master
+*.pkl
+*.model
+*.npy

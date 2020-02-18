@@ -22,14 +22,14 @@ class Config():
         self.padding_type = 'Zero'
         self.los_path = os.path.join(self.data, 'length-of-stay')
         self.decompensation_path = os.path.join(self.data, 'length-decompensation-stay')
-        self.ihm_path = os.path.join(self.data, 'mortality')
-        self.textdata_fixed = os.path.join(self.data, 'text_fixed')
+        self.ihm_path = os.path.join(self.data, 'in-hospital-mortality')
+        self.textdata_fixed = os.path.join(self.data, 'root', 'train_text_fixed')
         self.multitask_path = os.path.join(self.data, 'multitask')
         self.starttime_path = os.path.join(self.data, 'starttime.pkl')
         self.rnn_hidden_units = 256
         self.maximum_number_events = 150
         self.conv1d_channel_size = 256
-        self.test_textdata_fixed = os.path.join(self.data, 'test_text_fixed')
+        self.test_textdata_fixed = os.path.join(self.data, 'root', 'test_text_fixed')
         self.test_starttime_path = os.path.join(self.data, 'test_starttime.pkl')
         self.dropout = 0.9
         self.index2word_path = os.path.join(self.basepath, 'index2word.pkl')
