@@ -12,6 +12,7 @@ import numpy as np
 from matplotlib import pyplot
 from gensim.models import KeyedVectors
 from datetime import datetime
+import socket
 sys.path.insert(0, '..')
 
 def get_config():
@@ -30,9 +31,14 @@ def get_args():
     parser.add_argument("--problem_type", help="los/decom")
     parser.add_argument("--decay", default="0")
     parser.add_argument("--TEST", action='store_true', default=False)
+    parser.add_argument('--gpu_list', default="1,2", help="Which gpu numbers to use. Should be in format: 1,2 ")
     args = vars(parser.parse_args())
     assert args['mode'] in ['train', 'test', 'eval']
     args['decay'] = float(args['decay'])
+    if socket.gethostname() == 'area51.cs.washington.edu':
+        os.environ["CUDA_VISIBLE_DEVICES"] = args['gpu_list']
+        print("Setting gpus to:", args['gpu_list'])
+
     return args
 
 def get_embedding_dict(conf, TEST):
@@ -47,10 +53,9 @@ def get_embedding_dict(conf, TEST):
             word2index_lookup = pickle.load(f)
 
         print("Started loading word vectors model")
-        model = KeyedVectors.load("wv.model")
+        vectors = np.load(conf.wv_path) #'wv.model.vectors.npy')
+        # vectors = KeyedVectors.load("wv.model").vectors
         print("Finished loading word vectors model")
-        vectors = model.vectors
-        # vectors = np.load(conf.wv_path) #'wv.model.vectors.npy')
 
     return vectors, word2index_lookup
 

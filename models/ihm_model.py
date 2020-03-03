@@ -15,10 +15,12 @@ import tensorflow as tf
 from tensorflow.contrib import rnn
 import pickle
 import numpy as np
-import sys
-import random
-import os
 from datetime import datetime
+import random
+import socket
+import sys, os
+sys.path.append(os.getcwd())
+
 
 tf.logging.set_verbosity(tf.logging.INFO)
 tf.logging.info("*** Loaded Data ***")
@@ -31,6 +33,11 @@ log_folder = os.path.join(conf.log_folder, time_string)
 os.makedirs(log_folder, exist_ok=True)
 
 log = utils.get_logger(log_folder, args['log_file'])
+results_csv_path = os.path.join(log_folder, 'results.csv')
+header = "epoch;val_loss;val_AUCPR;val_AUCROC\n"
+with open(results_csv_path, 'w') as handle:
+    handle.write(header)
+
 vectors, word2index_lookup = utils.get_embedding_dict(conf, args['TEST'])
 lookup = utils.lookup
 # let's set pad token to zero padding instead of random padding.
@@ -52,9 +59,15 @@ dropout_keep_prob = tf.placeholder(dtype=tf.float32, name='dropout_kp')
 T = tf.placeholder(dtype=tf.int32)
 N = tf.placeholder(dtype=tf.int32)
 
-W_place = tf.placeholder(shape=vectors.shape, dtype = tf.float32, name='W_place')
-W = tf.Variable(W_place, name="W", trainable=False, shape = vectors.shape)
-# W = tf.get_variable(name="W", shape=vectors.shape, initializer=tf.constant_initializer(vectors), trainable=False)
+if socket.gethostname() != 'area51.cs.washington.edu':
+    with tf.device('/CPU:0'):
+        W_place = tf.placeholder(shape=vectors.shape, dtype = tf.float32, name='W_place')
+        W_place_concat = tf.concat([W_place,tf.constant(0, dtype=tf.float32, shape=(1,vectors.shape[1]))],axis=0)
+        W = tf.Variable(W_place_concat, name="W", trainable=False, shape = (vectors.shape[0]+1, vectors.shape[1]))
+else:
+    W_place = tf.placeholder(shape=vectors.shape, dtype = tf.float32, name='W_place')
+    W = tf.Variable(W_place, name="W", trainable=False, shape = vectors.shape)
+
 embeds = tf.nn.embedding_lookup(W, text)
 
 hidden_units = vectors.shape[1]
@@ -151,6 +164,17 @@ with tf.name_scope('valid_metric'):
         labels=y, predictions=probs)
     val_aucpr, update_val_aucpr_op = tf.metrics.auc(labels=y, predictions=probs,
                                                     curve="PR")
+
+loss_summary = tf.summary.scalar(name='loss', tensor=loss)
+aucroc_summary = tf.summary.scalar(name='aucpr', tensor=aucroc)
+aucpr_summary = tf.summary.scalar(name='aucpr', tensor=aucpr)
+summ_tr = tf.summary.merge([loss_summary, aucroc_summary, aucpr_summary])
+
+# loss_summary_val = tf.placeholder(tf.float32, shape=(), name="loss_summary_val")
+# summ_val_loss = tf.summary.scalar("loss_val", loss_summary_val)
+aucroc_summary_val = tf.summary.scalar(name='aucpr_val', tensor=val_aucroc)
+aucpr_summary_val = tf.summary.scalar(name='aucpr_val', tensor=val_aucpr)
+
 
 # Build readers, discretizers, normalizers
 train_reader = InHospitalMortalityReader(dataset_dir=os.path.join(conf.ihm_path, 'train'),
@@ -264,7 +288,7 @@ def generate_padded_batches(x, y, t, bs, w2i_lookup):
 
 def validate(data_X_val, data_y_val, data_text_val, batch_size, word2index_lookup,
              sess, saver, last_best_val_aucpr, loss, val_aucpr, val_aucroc,
-             update_val_aucpr_op, update_val_aucroc_op, save, epoch=0):
+             update_val_aucpr_op, update_val_aucroc_op, save, epoch=0, summ_writer=None):
     val_batches = generate_padded_batches(
         data_X_val, data_y_val, data_text_val, batch_size, word2index_lookup)
     loss_list = []
@@ -281,8 +305,16 @@ def validate(data_X_val, data_y_val, data_text_val, batch_size, word2index_looku
         loss_list.append(loss_value)
         aucpr_obj.add(probablities, v_batch[1])
 
-    final_aucpr = sess.run(val_aucpr)
-    final_aucroc = sess.run(val_aucroc)
+    # summ_loss_val_res = sess.run(summ_val_loss, {loss_summary_val: np.mean(loss_list)})
+    final_aucpr, summ_aucpr_val = sess.run([val_aucpr, aucpr_summary_val])
+    final_aucroc, summ_aucroc_val = sess.run([val_aucroc, aucroc_summary_val])
+
+    if summ_writer is not None:
+        # summ_writer.add_summary(summ_loss_val_res, epoch)
+        summ_writer.add_summary(summ_aucpr_val, epoch)
+        summ_writer.add_summary(summ_aucroc_val, epoch)
+        with open(results_csv_path, 'a') as handle:
+            handle.write("{};{};{};{}\n".format(epoch, np.mean(loss_list), final_aucpr, final_aucroc))
 
     tf.logging.info("Validation Loss: %f - AUCPR: %f - AUCPR-SKLEARN: %f - AUCROC: %f" %
                     (np.mean(loss_list), final_aucpr, aucpr_obj.get(), final_aucroc))
@@ -296,7 +328,6 @@ def validate(data_X_val, data_y_val, data_text_val, batch_size, word2index_looku
             tf.logging.info("Best Model saved in path: %s" % save_path)
     return max(last_best_val_aucpr, final_aucpr), changed
 
-
 init = tf.group(tf.global_variables_initializer(),
                 tf.local_variables_initializer())
 print(len(tf.local_variables()))
@@ -305,8 +336,12 @@ last_best_val_aucpr = -1
 
 
 gpu_config = tf.ConfigProto(device_count={'GPU': 1})
+#gpu_config.allow_soft_placement=True
 
 with tf.Session(config=gpu_config) as sess:
+
+    summ_writer = tf.summary.FileWriter(log_folder, sess.graph)
+
     sess.run(init, {W_place: vectors})
 
     if bool(int(args['load_model'])):
@@ -331,6 +366,7 @@ with tf.Session(config=gpu_config) as sess:
                                           loss, val_aucpr, val_aucroc, update_val_aucpr_op, update_val_aucroc_op, False)
         sys.exit(0)
 
+
     early_stopping = 0
     for epoch in range(number_epoch):
         tf.logging.info("Started training for epoch: %d" % epoch)
@@ -353,9 +389,11 @@ with tf.Session(config=gpu_config) as sess:
                   text: batch[2], dropout_keep_prob: conf.dropout,
                   T: batch[2].shape[1],
                   N: batch[2].shape[0]}
-            _, loss_value, aucpr_value, aucroc_value = sess.run(
-                [train_op, loss, update_aucpr_op, update_aucroc_op], fd)
+            _, loss_value, aucpr_value, aucroc_value, summ = sess.run(
+                [train_op, loss, update_aucpr_op, update_aucroc_op, summ_tr], fd)
             loss_list.append(loss_value)
+            summ_writer.add_summary(summ, epoch)
+
 
             # if ind % 200 == 0:
             # tf.logging.info(
@@ -378,7 +416,7 @@ with tf.Session(config=gpu_config) as sess:
         last_best_val_aucpr, changed = validate(eval_data_X, eval_data_y, eval_data_text,
                                                 batch_size, word2index_lookup, sess, saver, last_best_val_aucpr,
                                                 loss, val_aucpr, val_aucroc, update_val_aucpr_op, update_val_aucroc_op, True,
-                                                epoch=epoch)
+                                                epoch=epoch, summ_writer=summ_writer)
         if changed == False:
             early_stopping += 1
             tf.logging.info("Didn't improve!: " + str(early_stopping))

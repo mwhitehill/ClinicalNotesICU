@@ -1,5 +1,6 @@
 import os
 import sys
+import socket
 
 # Make sure can find the other repos
 sys.path.append(os.path.join(os.path.dirname(os.getcwd()), 'mimic3-benchmarks'))
@@ -8,7 +9,7 @@ sys.path.append(os.getcwd())
 class Config():
     def __init__(self):
         self.basepath = './'
-        self.data = '../mimic3-benchmarks/data/'
+        self.data = '../mimic3-benchmarks/data/' if socket.gethostname() != 'area51.cs.washington.edu' else r'/data/ClinicalNotesICU'
         self.timestep = 1.0
         self.normalizer_state = os.path.join(self.basepath, 'ihm_ts1.0.input_str-previous.start_time-zero.normalizer')
         self.imputation = 'previous'
@@ -32,9 +33,9 @@ class Config():
         self.test_textdata_fixed = os.path.join(self.data, 'root', 'test_text_fixed')
         self.test_starttime_path = os.path.join(self.data, 'test_starttime.pkl')
         self.dropout = 0.9
-        self.index2word_path = os.path.join(self.basepath, 'index2word.pkl')
-        self.wv_path = os.path.join(self.basepath, 'wv.model.vectors.npy')
-        self.log_folder = os.path.join(self.basepath, 'logs')
+        self.index2word_path = os.path.join(self.basepath, 'index2word.pkl') if socket.gethostname() != 'area51.cs.washington.edu' else os.path.join(self.data, 'index2word.pkl')
+        self.wv_path = os.path.join(self.basepath, 'wv.model.vectors.npy') if socket.gethostname() != 'area51.cs.washington.edu' else os.path.join(self.data, 'wv.model.vectors.npy')
+        self.log_folder = os.path.join(self.basepath, 'logs') if socket.gethostname() != 'area51.cs.washington.edu' else os.path.join(self.data, 'logs')
 
         #
         # self.model_path = os.path.join(self.basepath, 'wv.model')
