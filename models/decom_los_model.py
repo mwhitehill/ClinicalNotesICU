@@ -16,6 +16,8 @@ import os
 import sys
 import math
 from datetime import datetime
+import socket
+sys.path.append(os.getcwd())
 
 from mimic3models.multitask import utils as mt_utils
 from mimic3benchmark.readers import MultitaskReader
@@ -29,12 +31,18 @@ tf.logging.info("*** Loaded Data ***")
 conf = utils.get_config()
 args = utils.get_args()
 
-time_string = datetime.now().strftime('%Y.%m.%d_%H-%M-%S')
+time_string = datetime.now().strftime('%Y.%m.%d_%H-%M-%S') + "_" + args['problem_type']
 log_folder = os.path.join(conf.log_folder, time_string)
 os.makedirs(log_folder, exist_ok=True)
 
 log = utils.get_logger(log_folder, args['log_file'])
+results_csv_path = os.path.join(log_folder, 'results.csv')
+header = "epoch;val_loss;val_AUCPR;val_AUCROC;val_Kappa\n"
+with open(results_csv_path, 'w') as handle:
+    handle.write(header)
+
 vectors, word2index_lookup = utils.get_embedding_dict(conf, args['TEST'])
+
 lookup = utils.lookup
 
 model_name = args['model_name']
@@ -224,8 +232,15 @@ if model_name in ['text_cnn', 'text_only']:
     time_mask_final = time_mask_decay * time_mask_clipped
 
     # define variables
-    W = tf.get_variable(name="W", shape=vectors.shape,
-                        initializer=tf.constant_initializer(vectors), trainable=False)
+    if socket.gethostname() != 'area51.cs.washington.edu':
+        with tf.device('/CPU:0'):
+            W_place = tf.placeholder(shape=vectors.shape, dtype=tf.float32, name='W_place')
+            W_place_concat = tf.concat([W_place, tf.constant(0, dtype=tf.float32, shape=(1, vectors.shape[1]))],
+                                        axis=0)
+            W = tf.Variable(W_place_concat, name="W", trainable=False, shape=(vectors.shape[0] + 1, vectors.shape[1]))
+    else:
+        W_place = tf.placeholder(shape=vectors.shape, dtype=tf.float32, name='W_place')
+        W = tf.Variable(W_place, name="W", trainable=False, shape=vectors.shape)
     embeds = tf.nn.embedding_lookup(W, text)  # B*D*S*E
     text_features, text_feature_dim = get_text_features(
         embeds, dropout_keep_prob, time_mask_final, is_training)
@@ -277,21 +292,28 @@ with tf.name_scope('train'):
         global_step=tf.train.get_global_step())
 if problem_type == 'decom':
     with tf.name_scope('train_metric'):
-        aucroc, update_aucroc_op = tf.metrics.auc(
-            labels=y, predictions=probs, weights=mask)
-        aucpr, update_aucpr_op = tf.metrics.auc(labels=y, predictions=probs, weights=mask,
-                                                curve="PR")
+        aucroc, update_aucroc_op = tf.metrics.auc(labels=y, predictions=probs, weights=mask)
+        aucpr, update_aucpr_op = tf.metrics.auc(labels=y, predictions=probs, weights=mask, curve="PR")
 
     with tf.name_scope('valid_metric'):
-        val_aucroc, update_val_aucroc_op = tf.metrics.auc(
-            labels=y, predictions=probs, weights=mask)
-        val_aucpr, update_val_aucpr_op = tf.metrics.auc(labels=y, predictions=probs, weights=mask,
-                                                        curve="PR")
+        val_aucroc, update_val_aucroc_op = tf.metrics.auc(labels=y, predictions=probs, weights=mask)
+        val_aucpr, update_val_aucpr_op = tf.metrics.auc(labels=y, predictions=probs, weights=mask, curve="PR")
+
+
+
 else:
     val_aucpr = None
     val_aucroc = None
     update_val_aucpr_op = None
     update_val_aucroc_op = None
+
+loss_summary = tf.summary.scalar(name='loss', tensor=loss)
+aucroc_summary = tf.summary.scalar(name='aucroc', tensor=aucroc) if problem_type == 'decom' else None
+aucpr_summary = tf.summary.scalar(name='aucpr', tensor=aucpr) if problem_type == 'decom' else None
+summ_tr = tf.summary.merge([loss_summary, aucroc_summary, aucpr_summary]) if problem_type == 'decom' else loss_summary
+
+aucroc_summary_val = tf.summary.scalar(name='aucroc_val', tensor=val_aucroc) if problem_type == 'decom' else None
+aucpr_summary_val = tf.summary.scalar(name='aucpr_val', tensor=val_aucpr) if problem_type == 'decom' else None
 
 init = tf.group(tf.global_variables_initializer(),
                 tf.local_variables_initializer())
@@ -301,10 +323,10 @@ saver = tf.train.Saver()
 
 
 def validate(eval_data, sess, loss, val_aucpr, val_aucroc, update_val_aucpr_op, update_val_aucroc_op, save, last_best,
-             saver, epoch=0):
+             saver, epoch=0, summ_writer=None):
     loss_list = []
     # sess.run(tf.variables_initializer([v for v in tf.local_variables() if 'valid_metric' in v.name]))
-    sess.run(tf.local_variables_initializer())
+    sess.run(tf.local_variables_initializer(), {W_place: vectors})
 
     runnable_nodes = []
     if problem_type == 'decom':
@@ -329,8 +351,15 @@ def validate(eval_data, sess, loss, val_aucpr, val_aucroc, update_val_aucpr_op, 
             metric_obj.add(predictions, fd[y], fd[mask])
 
     if problem_type == 'decom':
-        final_aucpr = sess.run(val_aucpr)
-        final_aucroc = sess.run(val_aucroc)
+        final_aucpr, summ_aucpr_val = sess.run([val_aucpr, aucpr_summary_val])
+        final_aucroc, summ_aucroc_val = sess.run([val_aucroc, aucroc_summary_val])
+        if summ_writer is not None:
+            summ_writer.add_summary(summ_aucpr_val, epoch)
+            summ_writer.add_summary(summ_aucroc_val, epoch)
+
+        with open(results_csv_path, 'a') as handle:
+            handle.write("{};{};{};{}\n".format(epoch, np.mean(loss_list), final_aucpr, final_aucroc, 0))
+
         _, _, _, sklean_aucpr = metric_obj.get()
         if args['mode'] == 'test':
             tf.logging.info(
@@ -345,11 +374,14 @@ def validate(eval_data, sess, loss, val_aucpr, val_aucroc, update_val_aucpr_op, 
             changed = True
             if save:
                 save_path = saver.save(sess, os.path.join(log_folder, 'ckpt_e{}'.format(epoch)))
-                tf.logging.info(
-                    "Best Model saved in path: %s" % save_path)
+                tf.logging.info("Best Model saved in path: %s" % save_path)
         return max(last_best, final_aucpr), changed
     elif problem_type == 'los':
         _, _, _, kappa_score = metric_obj.get()
+
+        with open(results_csv_path, 'a') as handle:
+            handle.write("{};{};{};{}\n".format(epoch, np.mean(loss_list), 0, 0, kappa_score))
+
         if args['mode'] == 'test':
             tf.logging.info(
                 "Saving predictions in file : {}".format("decome_"+model_name))
@@ -382,7 +414,9 @@ def get_feed_dict_from_batch(batch, model_name, training, keep_prob=1):
 
 last_best = -1
 with tf.Session(config=gpu_config) as sess:
-    sess.run(init)
+    summ_writer = tf.summary.FileWriter(log_folder, sess.graph)
+
+    sess.run(init, {W_place: vectors})
 
     if bool(int(args['load_model'])):
         saver.restore(sess, os.path.join('logs', args['checkpoint_path']))
@@ -413,11 +447,10 @@ with tf.Session(config=gpu_config) as sess:
     early_stopping_count = 0
     runnable_nodes = []
     if problem_type == 'decom':
-        runnable_nodes.extend(
-            [train_op, loss, update_aucpr_op, update_aucroc_op])
+        runnable_nodes.extend([train_op, loss, update_aucpr_op, update_aucroc_op, summ_tr])
         metric_obj = utils.AUCPRperHour()
     elif problem_type == 'los':
-        runnable_nodes.extend([train_op, loss, probs])
+        runnable_nodes.extend([train_op, loss, probs, summ_tr])
 
     print(runnable_nodes)
     for epoch in range(number_epoch):
@@ -430,8 +463,7 @@ with tf.Session(config=gpu_config) as sess:
         for batch in data:
             fd = get_feed_dict_from_batch(
                 batch, model_name, True, conf.dropout)
-            node_outputs = sess.run(
-                runnable_nodes, fd)
+            node_outputs = sess.run(runnable_nodes, fd)
             loss_value = node_outputs[1]
             loss_list.append(loss_value)
 
@@ -444,21 +476,22 @@ with tf.Session(config=gpu_config) as sess:
         if problem_type == 'decom':
             aucpr_value = node_outputs[2]
             aucroc_value = node_outputs[3]
+            summ_writer.add_summary(node_outputs[4], epoch)
             current_aucroc = sess.run(aucroc)
             current_aucpr = sess.run(aucpr)
 
             tf.logging.info("Epoch %d Loss: %f - AUCPR: %f - AUCROC: %f" %
                             (epoch, np.mean(loss_list), current_aucpr, current_aucroc))
         elif problem_type == 'los':
+            summ_writer.add_summary(node_outputs[3], epoch)
             _, _, _, train_kappa = metric_obj.get()
-            tf.logging.info("Epoch %d Loss: %f Kappa: %f" %
-                            (epoch, np.mean(loss_list), train_kappa))
+            tf.logging.info("Epoch %d Loss: %f Kappa: %f" % (epoch, np.mean(loss_list), train_kappa))
 
         # reset aucroc and aucpr local variables
         sess.run(tf.local_variables_initializer())
         last_best, changed = validate(eval_data, sess, loss, val_aucpr, val_aucroc,
                                       update_val_aucpr_op, update_val_aucroc_op, True,
-                                      last_best, saver, epoch=epoch)
+                                      last_best, saver, epoch=epoch, summ_writer=summ_writer)
         if changed == False:
             early_stopping_count += 1
             tf.logging.info("Didn't improve! : Count: " +

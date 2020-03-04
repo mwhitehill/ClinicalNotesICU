@@ -28,7 +28,7 @@ tf.logging.info("*** Loaded Data ***")
 conf = utils.get_config()
 args = utils.get_args()
 
-time_string = datetime.now().strftime('%Y.%m.%d_%H-%M-%S')
+time_string = datetime.now().strftime('%Y.%m.%d_%H-%M-%S') + "_ihm"
 log_folder = os.path.join(conf.log_folder, time_string)
 os.makedirs(log_folder, exist_ok=True)
 
@@ -83,10 +83,8 @@ if model_name != 'baseline':
         text_embeddings = tf.math.reduce_mean(embeds, axis=1, keepdims=False)
     elif model_name == 'transformer':
         tf.logging.info("Transformer Encoder Based Model!")
-        key_masks = tf.expand_dims(
-            tf.sign(tf.reduce_sum(tf.abs(embeds), axis=-1)), -1)
-        embeds += utils.positional_encoding(text, T, N, num_units=hidden_units,
-                                            zero_pad=False, scale=False, scope="enc_pe")
+        key_masks = tf.expand_dims(tf.sign(tf.reduce_sum(tf.abs(embeds), axis=-1)), -1)
+        embeds += utils.positional_encoding(text, T, N, num_units=hidden_units,zero_pad=False, scale=False, scope="enc_pe")
         embeds *= key_masks
 
         # Dropout
@@ -120,8 +118,7 @@ if model_name != 'baseline':
             text_conv1d = tf.reduce_max(text_conv1d, axis=1, keepdims=False)
             result_tensors.append(text_conv1d)
         text_embeddings = tf.concat(result_tensors, axis=1)
-        text_embeddings = tf.nn.dropout(
-            text_embeddings, keep_prob=dropout_keep_prob)
+        text_embeddings = tf.nn.dropout(text_embeddings, keep_prob=dropout_keep_prob)
 
 rnn_cell = rnn.LSTMCell(num_units=256)
 rnn_outputs, _ = tf.nn.dynamic_rnn(rnn_cell, X,
@@ -166,13 +163,13 @@ with tf.name_scope('valid_metric'):
                                                     curve="PR")
 
 loss_summary = tf.summary.scalar(name='loss', tensor=loss)
-aucroc_summary = tf.summary.scalar(name='aucpr', tensor=aucroc)
+aucroc_summary = tf.summary.scalar(name='aucroc', tensor=aucroc)
 aucpr_summary = tf.summary.scalar(name='aucpr', tensor=aucpr)
 summ_tr = tf.summary.merge([loss_summary, aucroc_summary, aucpr_summary])
 
 # loss_summary_val = tf.placeholder(tf.float32, shape=(), name="loss_summary_val")
 # summ_val_loss = tf.summary.scalar("loss_val", loss_summary_val)
-aucroc_summary_val = tf.summary.scalar(name='aucpr_val', tensor=val_aucroc)
+aucroc_summary_val = tf.summary.scalar(name='aucroc_val', tensor=val_aucroc)
 aucpr_summary_val = tf.summary.scalar(name='aucpr_val', tensor=val_aucpr)
 
 
