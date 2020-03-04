@@ -1,7 +1,6 @@
 import json
 import pandas as pd
 import os
-import config
 import tensorflow as tf
 from sklearn import metrics
 import logging
@@ -14,6 +13,7 @@ from gensim.models import KeyedVectors
 from datetime import datetime
 import socket
 sys.path.insert(0, '..')
+import config
 
 def get_config():
     return config.Config()
@@ -27,10 +27,12 @@ def get_args():
     parser.add_argument("--checkpoint_path", help="Path for checkpointing", default='ckpt')
     parser.add_argument("--evaluate_only")
     parser.add_argument("--model_name", default='cnn', help="'baseline', 'avg_we', 'transformer', 'cnn', 'text_only'")
+    parser.add_argument("--model_subname", default='none', help="'text_cnn_lstm'")
     parser.add_argument("--mode", help="train/test/eval", default='train')
     parser.add_argument("--problem_type", help="los/decom")
     parser.add_argument("--decay", default="0")
     parser.add_argument("--TEST", action='store_true', default=False)
+    parser.add_argument("--TEST_MODEL", action='store_true', default=False, help='Just test the model graph')
     parser.add_argument('--gpu_list', default="1,2", help="Which gpu numbers to use. Should be in format: 1,2 ")
     args = vars(parser.parse_args())
     assert args['mode'] in ['train', 'test', 'eval']
@@ -38,6 +40,8 @@ def get_args():
     if socket.gethostname() == 'area51.cs.washington.edu':
         os.environ["CUDA_VISIBLE_DEVICES"] = args['gpu_list']
         print("Setting gpus to:", args['gpu_list'])
+    # else:
+    #     os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
     return args
 
@@ -388,8 +392,7 @@ def positional_encoding(inputs, T, N,
         lookup_table = get_pos_enc(num_units, T)
 
         if zero_pad:
-            lookup_table = tf.concat((tf.zeros(shape=[1, num_units]),
-                                      lookup_table[1:, :]), 0)
+            lookup_table = tf.concat((tf.zeros(shape=[1, num_units]), lookup_table[1:, :]), 0)
         outputs = tf.nn.embedding_lookup(lookup_table, position_ind)
 
         if scale:

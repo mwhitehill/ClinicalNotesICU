@@ -1,8 +1,3 @@
-from config import Config
-from mimic3models import common_utils
-from mimic3models.preprocessing import Discretizer, Normalizer
-from mimic3benchmark.readers import InHospitalMortalityReader
-from mimic3models.in_hospital_mortality import utils as ihm_utils
 '''
 In intensive care units, where patients come in with a wide range of health conditions, 
 triaging relies heavily on clinical judgment. ICU staff run numerous physiological tests, 
@@ -10,7 +5,6 @@ such as bloodwork and checking vital signs,
 to determine if patients are at immediate risk of dying if not treated aggressively.
 '''
 
-import utils
 import tensorflow as tf
 from tensorflow.contrib import rnn
 import pickle
@@ -21,6 +15,12 @@ import socket
 import sys, os
 sys.path.append(os.getcwd())
 
+import utils
+from config import Config
+from mimic3models import common_utils
+from mimic3models.preprocessing import Discretizer, Normalizer
+from mimic3benchmark.readers import InHospitalMortalityReader
+from mimic3models.in_hospital_mortality import utils as ihm_utils
 
 tf.logging.set_verbosity(tf.logging.INFO)
 tf.logging.info("*** Loaded Data ***")
@@ -77,6 +77,11 @@ hidden_units = vectors.shape[1]
 
 model_name = args['model_name']
 assert model_name in ['baseline', 'avg_we', 'transformer', 'cnn', 'text_only']
+model_subname = args['model_subname']
+assert model_subname in ['none', 'text_cnn_lstm']
+
+print("MODEL_NAME:", model_name, "MODEL_SUBNAME:",model_subname)
+
 if model_name != 'baseline':
     if model_name == 'avg_we':
         tf.logging.info("Average Word Embeddings Model!")
@@ -102,28 +107,41 @@ if model_name != 'baseline':
                                                 causality=False)
 
                 # Feed Forward
-                enc = utils.feedforward(enc, num_units=[
-                    4*hidden_units, hidden_units])
+                enc = utils.feedforward(enc, num_units=[4*hidden_units, hidden_units])
         text_embeddings = tf.reduce_mean(enc, axis=1)
     else:
         tf.logging.info("1D Convolution Model")
         sizes = range(2, 5)
         result_tensors = []
-        for ngram_size in sizes:
-            # 256 -> 2,3 best yet.
-            text_conv1d = tf.layers.conv1d(inputs=embeds, filters=256, kernel_size=ngram_size,
-                                           strides=1, padding='same', dilation_rate=1,
-                                           activation='relu', name='Text_Conv_1D_N{}'.format(ngram_size),
-                                           kernel_regularizer=tf.contrib.layers.l2_regularizer(scale=0.01))
-            text_conv1d = tf.reduce_max(text_conv1d, axis=1, keepdims=False)
-            result_tensors.append(text_conv1d)
-        text_embeddings = tf.concat(result_tensors, axis=1)
-        text_embeddings = tf.nn.dropout(text_embeddings, keep_prob=dropout_keep_prob)
+        if model_subname == 'text_cnn_lstm':
+            for ngram_size in sizes:
+                # 256 -> 2,3 best yet.
+                text_conv1d = tf.layers.conv1d(inputs=embeds, filters=256, kernel_size=ngram_size,
+                                               strides=1, padding='same', dilation_rate=1,
+                                               activation='relu', name='Text_Conv_1D_N{}'.format(ngram_size),
+                                               kernel_regularizer=tf.contrib.layers.l2_regularizer(scale=0.01))
+                # text_conv1d = tf.reduce_max(text_conv1d, axis=1, keepdims=False)
+                result_tensors.append(text_conv1d)
+            text_embeddings = tf.concat(result_tensors, axis=-1)
+            # text_embeddings = tf.nn.dropout(text_embeddings, keep_prob=dropout_keep_prob)
+            rnn_cell_text = rnn.LSTMCell(num_units=3*256, name='lstm_text')
+            rnn_outputs_text, _ = tf.nn.dynamic_rnn(rnn_cell_text, text_embeddings, time_major=False, dtype=tf.float32)
+            rnn_outputs_text_last = rnn_outputs_text[:,-1,:]
+            rnn_outputs_text_last = tf.nn.dropout(rnn_outputs_text_last, keep_prob=dropout_keep_prob)
+        else:
+            for ngram_size in sizes:
+                # 256 -> 2,3 best yet.
+                text_conv1d = tf.layers.conv1d(inputs=embeds, filters=256, kernel_size=ngram_size,
+                                               strides=1, padding='same', dilation_rate=1,
+                                               activation='relu', name='Text_Conv_1D_N{}'.format(ngram_size),
+                                               kernel_regularizer=tf.contrib.layers.l2_regularizer(scale=0.01))
+                text_conv1d = tf.reduce_max(text_conv1d, axis=1, keepdims=False)
+                result_tensors.append(text_conv1d)
+            text_embeddings = tf.concat(result_tensors, axis=1)
+            text_embeddings = tf.nn.dropout(text_embeddings, keep_prob=dropout_keep_prob)
 
-rnn_cell = rnn.LSTMCell(num_units=256)
-rnn_outputs, _ = tf.nn.dynamic_rnn(rnn_cell, X,
-                                   time_major=False,
-                                   dtype=tf.float32)
+rnn_cell = rnn.LSTMCell(num_units=256, name='lstm_main')
+rnn_outputs, _ = tf.nn.dynamic_rnn(rnn_cell, X, time_major=False, dtype=tf.float32)
 
 #mean_rnn_outputs = tf.math.reduce_mean(rnn_outputs, axis=1, keepdims=False)
 mean_rnn_outputs = rnn_outputs[:, -1, :]
@@ -132,7 +150,11 @@ if model_name == 'baseline':
 elif model_name == 'text_only':
     logit_X = text_embeddings
 else:
-    logit_X = tf.concat([text_embeddings, mean_rnn_outputs], axis=1)
+    if model_subname == "text_cnn_lstm":
+        logit_X = tf.concat([rnn_outputs_text_last, mean_rnn_outputs], axis=1)
+    else:
+        logit_X = tf.concat([text_embeddings, mean_rnn_outputs], axis=1)
+
 
 logits_regularizer = tf.contrib.layers.l2_regularizer(scale=0.01)
 logits = tf.layers.dense(inputs=logit_X, units=1, activation=None, use_bias=False,
@@ -172,65 +194,57 @@ summ_tr = tf.summary.merge([loss_summary, aucroc_summary, aucpr_summary])
 aucroc_summary_val = tf.summary.scalar(name='aucroc_val', tensor=val_aucroc)
 aucpr_summary_val = tf.summary.scalar(name='aucpr_val', tensor=val_aucpr)
 
+if not(args['TEST_MODEL']):
+    # Build readers, discretizers, normalizers
+    train_reader = InHospitalMortalityReader(dataset_dir=os.path.join(conf.ihm_path, 'train'),
+                                             listfile=os.path.join(conf.ihm_path, 'train_listfile.csv'), period_length=48.0)
 
-# Build readers, discretizers, normalizers
-train_reader = InHospitalMortalityReader(dataset_dir=os.path.join(conf.ihm_path, 'train'),
-                                         listfile=os.path.join(conf.ihm_path, 'train_listfile.csv'), period_length=48.0)
+    discretizer = Discretizer(timestep=float(conf.timestep),
+                              store_masks=True,
+                              impute_strategy='previous',
+                              start_time='zero')
 
-discretizer = Discretizer(timestep=float(conf.timestep),
-                          store_masks=True,
-                          impute_strategy='previous',
-                          start_time='zero')
+    discretizer_header = discretizer.transform(train_reader.read_example(0)["X"])[1].split(',')
+    cont_channels = [i for (i, x) in enumerate(discretizer_header) if x.find("->") == -1]
 
-discretizer_header = discretizer.transform(
-    train_reader.read_example(0)["X"])[1].split(',')
-cont_channels = [i for (i, x) in enumerate(
-    discretizer_header) if x.find("->") == -1]
+    # choose here which columns to standardize
+    normalizer = Normalizer(fields=cont_channels)
+    normalizer_state = conf.normalizer_state
+    if normalizer_state is None:
+        normalizer_state = 'ihm_ts{}.input_str:{}.start_time:zero.normalizer'.format(conf.timestep, conf.imputation)
+        normalizer_state = os.path.join(os.path.dirname(__file__), normalizer_state)
+    normalizer.load_params(normalizer_state)
 
-# choose here which columns to standardize
-normalizer = Normalizer(fields=cont_channels)
-normalizer_state = conf.normalizer_state
-if normalizer_state is None:
-    normalizer_state = 'ihm_ts{}.input_str:{}.start_time:zero.normalizer'.format(
-        conf.timestep, conf.imputation)
-    normalizer_state = os.path.join(
-        os.path.dirname(__file__), normalizer_state)
-normalizer.load_params(normalizer_state)
+    normalizer = None
+    train_raw = ihm_utils.load_data(train_reader, discretizer, normalizer, conf.small_part, return_names=True)
 
-normalizer = None
-train_raw = ihm_utils.load_data(
-    train_reader, discretizer, normalizer, conf.small_part, return_names=True)
+    print("Number of train_raw_names: ", len(train_raw['names']))
 
-print("Number of train_raw_names: ", len(train_raw['names']))
+    text_reader = utils.TextReader(conf.textdata_fixed, conf.starttime_path)
 
-text_reader = utils.TextReader(conf.textdata_fixed, conf.starttime_path)
+    train_text = text_reader.read_all_text_concat_json(train_raw['names'], 48)
+    data = utils.merge_text_raw(train_text, train_raw)
 
-train_text = text_reader.read_all_text_concat_json(train_raw['names'], 48)
-data = utils.merge_text_raw(train_text, train_raw)
+    data_X = data[0]
+    data_y = data[1]
+    data_text = data[2]
+    del data
+    del train_raw
+    del train_text
 
-data_X = data[0]
-data_y = data[1]
-data_text = data[2]
-del data
-del train_raw
-del train_text
+    eval_reader = InHospitalMortalityReader(dataset_dir=os.path.join(conf.ihm_path, 'train'),listfile=os.path.join(conf.ihm_path, 'val_listfile.csv'),
+                                            period_length=48.0)
+    eval_raw = ihm_utils.load_data(eval_reader, discretizer,normalizer, conf.small_part, return_names=True)
 
-eval_reader = InHospitalMortalityReader(dataset_dir=os.path.join(conf.ihm_path, 'train'),
-                                        listfile=os.path.join(
-                                            conf.ihm_path, 'val_listfile.csv'),
-                                        period_length=48.0)
-eval_raw = ihm_utils.load_data(eval_reader, discretizer,
-                               normalizer, conf.small_part, return_names=True)
+    eval_text = text_reader.read_all_text_concat_json(eval_raw['names'], 48)
+    data = utils.merge_text_raw(eval_text, eval_raw)
 
-eval_text = text_reader.read_all_text_concat_json(eval_raw['names'], 48)
-data = utils.merge_text_raw(eval_text, eval_raw)
-
-eval_data_X = data[0]
-eval_data_y = data[1]
-eval_data_text = data[2]
-del data
-del eval_raw
-del eval_text
+    eval_data_X = data[0]
+    eval_data_y = data[1]
+    eval_data_text = data[2]
+    del data
+    del eval_raw
+    del eval_text
 
 if args['mode'] == 'test':
     test_reader = InHospitalMortalityReader(dataset_dir=os.path.join(conf.ihm_path, 'test'),
@@ -325,8 +339,7 @@ def validate(data_X_val, data_y_val, data_text_val, batch_size, word2index_looku
             tf.logging.info("Best Model saved in path: %s" % save_path)
     return max(last_best_val_aucpr, final_aucpr), changed
 
-init = tf.group(tf.global_variables_initializer(),
-                tf.local_variables_initializer())
+init = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
 print(len(tf.local_variables()))
 saver = tf.train.Saver()
 last_best_val_aucpr = -1
@@ -340,6 +353,19 @@ with tf.Session(config=gpu_config) as sess:
     summ_writer = tf.summary.FileWriter(log_folder, sess.graph)
 
     sess.run(init, {W_place: vectors})
+
+    if args['TEST_MODEL']:
+        if model_subname != 'text_cnn_lstm':
+            raise('Can only test model on text_cnn_lstm right now')
+        fd = {text: np.zeros((5,100)), dropout_keep_prob: conf.dropout}
+
+        t1, t2, t3 = sess.run([text_embeddings, rnn_outputs_text, rnn_outputs_text_last], fd)
+
+        print(t1.shape)
+        print(t2.shape)
+        print(t3.shape)
+        raise
+
 
     if bool(int(args['load_model'])):
         saver.restore(sess, os.path.join('logs', args['checkpoint_path']))
@@ -386,6 +412,7 @@ with tf.Session(config=gpu_config) as sess:
                   text: batch[2], dropout_keep_prob: conf.dropout,
                   T: batch[2].shape[1],
                   N: batch[2].shape[0]}
+
             _, loss_value, aucpr_value, aucroc_value, summ = sess.run(
                 [train_op, loss, update_aucpr_op, update_aucroc_op, summ_tr], fd)
             loss_list.append(loss_value)

@@ -6,18 +6,14 @@ compute scp mimic3-benchmarks/mimic3models/multitask/utils.py
 tensorflow-machine-vm:~/mimic3-text/mimic3-benchmarks/mimic3models/multitask/ --project mimic3
 
 '''
+import os, sys
+sys.path.append(os.getcwd())
 import numpy as np
-import pickle
 from tensorflow.contrib import rnn
 import tensorflow as tf
 import utils
-import random
-import os
-import sys
-import math
 from datetime import datetime
 import socket
-sys.path.append(os.getcwd())
 
 from mimic3models.multitask import utils as mt_utils
 from mimic3benchmark.readers import MultitaskReader
@@ -186,13 +182,11 @@ def get_text_features(embeds, dropout_keep_prob, time_mask, is_train):
     #    text_embeddings, axis=1, training=is_train)
     # text_embeddings = tf.nn.dropout(
     #    text_embeddings, keep_prob=dropout_keep_prob)
-    sentence_features = tf.reshape(
-        text_embeddings, (shapes[0], shapes[1], conf.conv1d_channel_size*len(sizes)))
+    sentence_features = tf.reshape(text_embeddings, (shapes[0], shapes[1], conf.conv1d_channel_size*len(sizes)))
 
     # using tf map_fn multiply sentence_features to time_mask and take maximum for each row in batch.
     map_fn_elems = (sentence_features, time_mask)
-    final_text_features = tf.map_fn(lambda x: TimeSpreadConv1D(
-        x[0], x[1]), map_fn_elems, dtype=tf.float32)
+    final_text_features = tf.map_fn(lambda x: TimeSpreadConv1D(x[0], x[1]), map_fn_elems, dtype=tf.float32)
 
     # text_lstm = rnn.LSTMCell(num_units=128, name='text_rnn')
     # final_text_features, _ = tf.nn.dynamic_rnn(text_lstm, final_text_features, time_major=False, dtype=tf.float32)
@@ -214,21 +208,17 @@ rnn_outputs, _ = tf.nn.dynamic_rnn(rnn_cell, X,
                                    time_major=False,
                                    dtype=tf.float32)
 if model_name == 'baseline':
-    output_features_reshaped = tf.reshape(
-        rnn_outputs, [-1, conf.rnn_hidden_units])
+    output_features_reshaped = tf.reshape(rnn_outputs, [-1, conf.rnn_hidden_units])
 
 if model_name in ['text_cnn', 'text_only']:
     # text side
     tf.logging.info("Adding graph for text_features!")
-    time_mask = tf.placeholder(
-        shape=(None, None, None), dtype=tf.float32, name='time_mask')  # B*D*S
-    text = tf.placeholder(shape=(None, None, None),
-                          dtype=tf.int32, name='text_ts')  # B*D*S
+    time_mask = tf.placeholder(shape=(None, None, None), dtype=tf.float32, name='time_mask')  # B*D*S
+    text = tf.placeholder(shape=(None, None, None), dtype=tf.int32, name='text_ts')  # B*D*S
     # clip time mask for equal weightage
     tf.logging.info("Using decay with lambda = %f" % args['decay'])
     time_mask_decay = tf.math.exp(-args['decay']*time_mask)
-    time_mask_clipped = tf.clip_by_value(
-        time_mask, 0, 1, name='UniformWeigthTM')
+    time_mask_clipped = tf.clip_by_value(time_mask, 0, 1, name='UniformWeigthTM')
     time_mask_final = time_mask_decay * time_mask_clipped
 
     # define variables
@@ -242,21 +232,16 @@ if model_name in ['text_cnn', 'text_only']:
         W_place = tf.placeholder(shape=vectors.shape, dtype=tf.float32, name='W_place')
         W = tf.Variable(W_place, name="W", trainable=False, shape=vectors.shape)
     embeds = tf.nn.embedding_lookup(W, text)  # B*D*S*E
-    text_features, text_feature_dim = get_text_features(
-        embeds, dropout_keep_prob, time_mask_final, is_training)
-    tf.logging.info(
-        "Total dimenstion of text feature: {}".format(text_feature_dim))
+    text_features, text_feature_dim = get_text_features(embeds, dropout_keep_prob, time_mask_final, is_training)
+    tf.logging.info("Total dimenstion of text feature: {}".format(text_feature_dim))
 
     if model_name == 'text_cnn':
         tf.logging.info("Text Convolution Model for Decompensation")
-        output_features = tf.concat(
-            [rnn_outputs, text_features], axis=2, name='rnn_text_concat')
-        output_features_reshaped = tf.reshape(
-            output_features, [-1, conf.rnn_hidden_units + text_feature_dim])
+        output_features = tf.concat([rnn_outputs, text_features], axis=2, name='rnn_text_concat')
+        output_features_reshaped = tf.reshape(output_features, [-1, conf.rnn_hidden_units + text_feature_dim])
     elif model_name == 'text_only':
         tf.logging.info("Training text only Model for Decompensation")
-        output_features_reshaped = tf.reshape(
-            text_features, [-1, text_feature_dim])
+        output_features_reshaped = tf.reshape(text_features, [-1, text_feature_dim])
 
 if problem_type == 'decom':
     output_units = 1
