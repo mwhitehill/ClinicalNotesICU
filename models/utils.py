@@ -27,7 +27,7 @@ def get_args():
     parser.add_argument("--checkpoint_path", help="Path for checkpointing", default='ckpt')
     parser.add_argument("--evaluate_only")
     parser.add_argument("--model_name", default='cnn', help="'baseline', 'avg_we', 'transformer', 'cnn', 'text_only'")
-    parser.add_argument("--model_subname", default='none', help="'text_cnn_lstm'")
+    parser.add_argument("--model_subname", default='none', help="'text_cnn_lstm_fw','text_cnn_lstm_bi'")
     parser.add_argument("--mode", help="train/test/eval", default='train')
     parser.add_argument("--problem_type", help="los/decom")
     parser.add_argument("--decay", default="0")

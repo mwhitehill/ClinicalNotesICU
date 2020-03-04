@@ -13,6 +13,7 @@ from datetime import datetime
 import random
 import socket
 import sys, os
+import time
 sys.path.append(os.getcwd())
 
 import utils
@@ -38,6 +39,13 @@ header = "epoch;val_loss;val_AUCPR;val_AUCROC\n"
 with open(results_csv_path, 'w') as handle:
     handle.write(header)
 
+model_name = args['model_name']
+assert model_name in ['baseline', 'avg_we', 'transformer', 'cnn', 'text_only']
+model_subname = args['model_subname']
+assert model_subname in ['none', 'text_cnn_lstm_fw','text_cnn_lstm_bi']
+
+print("MODEL_NAME:", model_name, "MODEL_SUBNAME:",model_subname)
+
 vectors, word2index_lookup = utils.get_embedding_dict(conf, args['TEST'])
 lookup = utils.lookup
 # let's set pad token to zero padding instead of random padding.
@@ -59,14 +67,15 @@ dropout_keep_prob = tf.placeholder(dtype=tf.float32, name='dropout_kp')
 T = tf.placeholder(dtype=tf.int32)
 N = tf.placeholder(dtype=tf.int32)
 
-if socket.gethostname() != 'area51.cs.washington.edu':
+# Have a big enough gpu and simple enough model to fit word embeddings on gpu (all other cases, can't do that)
+if socket.gethostname() == 'area51.cs.washington.edu' and model_subname == 'none':
+    W_place = tf.placeholder(shape=vectors.shape, dtype = tf.float32, name='W_place')
+    W = tf.Variable(W_place, name="W", trainable=False, shape = vectors.shape)
+else:
     with tf.device('/CPU:0'):
         W_place = tf.placeholder(shape=vectors.shape, dtype = tf.float32, name='W_place')
         W_place_concat = tf.concat([W_place,tf.constant(0, dtype=tf.float32, shape=(1,vectors.shape[1]))],axis=0)
         W = tf.Variable(W_place_concat, name="W", trainable=False, shape = (vectors.shape[0]+1, vectors.shape[1]))
-else:
-    W_place = tf.placeholder(shape=vectors.shape, dtype = tf.float32, name='W_place')
-    W = tf.Variable(W_place, name="W", trainable=False, shape = vectors.shape)
 
 embeds = tf.nn.embedding_lookup(W, text)
 
@@ -74,13 +83,6 @@ hidden_units = vectors.shape[1]
 
 #avg_word_embedding_mode = bool(int(args['avg_we_model']))
 #baseline = bool(int(args['baseline']))
-
-model_name = args['model_name']
-assert model_name in ['baseline', 'avg_we', 'transformer', 'cnn', 'text_only']
-model_subname = args['model_subname']
-assert model_subname in ['none', 'text_cnn_lstm']
-
-print("MODEL_NAME:", model_name, "MODEL_SUBNAME:",model_subname)
 
 if model_name != 'baseline':
     if model_name == 'avg_we':
@@ -113,7 +115,7 @@ if model_name != 'baseline':
         tf.logging.info("1D Convolution Model")
         sizes = range(2, 5)
         result_tensors = []
-        if model_subname == 'text_cnn_lstm':
+        if model_subname.startswith('text_cnn_lstm'):
             for ngram_size in sizes:
                 # 256 -> 2,3 best yet.
                 text_conv1d = tf.layers.conv1d(inputs=embeds, filters=256, kernel_size=ngram_size,
@@ -124,10 +126,20 @@ if model_name != 'baseline':
                 result_tensors.append(text_conv1d)
             text_embeddings = tf.concat(result_tensors, axis=-1)
             # text_embeddings = tf.nn.dropout(text_embeddings, keep_prob=dropout_keep_prob)
-            rnn_cell_text = rnn.LSTMCell(num_units=3*256, name='lstm_text')
-            rnn_outputs_text, _ = tf.nn.dynamic_rnn(rnn_cell_text, text_embeddings, time_major=False, dtype=tf.float32)
-            rnn_outputs_text_last = rnn_outputs_text[:,-1,:]
-            rnn_outputs_text_last = tf.nn.dropout(rnn_outputs_text_last, keep_prob=dropout_keep_prob)
+            if model_subname == 'text_cnn_lstm_fw':
+                rnn_cell_text = rnn.LSTMCell(num_units=512, name='lstm_text')
+                rnn_outputs_text, _ = tf.nn.dynamic_rnn(rnn_cell_text, text_embeddings, time_major=False, dtype=tf.float32)
+                rnn_outputs_text_last = rnn_outputs_text[:,-1,:]
+                rnn_outputs_text_last = tf.nn.dropout(rnn_outputs_text_last, keep_prob=dropout_keep_prob)
+            else:
+                rnn_cell_text_fw = rnn.LSTMCell(num_units=256, name='lstm_text_fw')
+                rnn_cell_text_bw = rnn.LSTMCell(num_units=256, name='lstm_text_bw')
+                rnn_outputs_text, _ = tf.nn.bidirectional_dynamic_rnn(rnn_cell_text_fw, rnn_cell_text_bw, text_embeddings, time_major=False, dtype=tf.float32)
+                rnn_outputs_text = tf.concat(rnn_outputs_text, 2)
+                rnn_outputs_text_last = rnn_outputs_text[:, -1, :]
+                rnn_outputs_text_last = tf.layers.dense(inputs=rnn_outputs_text_last, units=512, activation='relu',
+                                                        kernel_regularizer=tf.contrib.layers.l2_regularizer(scale=0.01))
+                rnn_outputs_text_last = tf.nn.dropout(rnn_outputs_text_last, keep_prob=dropout_keep_prob)
         else:
             for ngram_size in sizes:
                 # 256 -> 2,3 best yet.
@@ -150,7 +162,7 @@ if model_name == 'baseline':
 elif model_name == 'text_only':
     logit_X = text_embeddings
 else:
-    if model_subname == "text_cnn_lstm":
+    if model_subname.startswith('text_cnn_lstm'):
         logit_X = tf.concat([rnn_outputs_text_last, mean_rnn_outputs], axis=1)
     else:
         logit_X = tf.concat([text_embeddings, mean_rnn_outputs], axis=1)
@@ -300,8 +312,7 @@ def generate_padded_batches(x, y, t, bs, w2i_lookup):
 def validate(data_X_val, data_y_val, data_text_val, batch_size, word2index_lookup,
              sess, saver, last_best_val_aucpr, loss, val_aucpr, val_aucroc,
              update_val_aucpr_op, update_val_aucroc_op, save, epoch=0, summ_writer=None):
-    val_batches = generate_padded_batches(
-        data_X_val, data_y_val, data_text_val, batch_size, word2index_lookup)
+    val_batches = generate_padded_batches(data_X_val, data_y_val, data_text_val, batch_size, word2index_lookup)
     loss_list = []
     aucpr_obj = utils.AUCPR()
     #sess.run(tf.variables_initializer([v for v in tf.local_variables() if 'valid_metric' in v.name]))
@@ -355,7 +366,7 @@ with tf.Session(config=gpu_config) as sess:
     sess.run(init, {W_place: vectors})
 
     if args['TEST_MODEL']:
-        if model_subname != 'text_cnn_lstm':
+        if not(model_subname.startswith('text_cnn_lstm')):
             raise('Can only test model on text_cnn_lstm right now')
         fd = {text: np.zeros((5,100)), dropout_keep_prob: conf.dropout}
 
@@ -391,6 +402,7 @@ with tf.Session(config=gpu_config) as sess:
 
 
     early_stopping = 0
+    times = np.array([])
     for epoch in range(number_epoch):
         tf.logging.info("Started training for epoch: %d" % epoch)
         data = list(zip(data_X, data_y, data_text))
@@ -401,13 +413,15 @@ with tf.Session(config=gpu_config) as sess:
 
         del data
 
-        batches = generate_padded_batches(
-            data_X, data_y, data_text, batch_size, word2index_lookup)
+        batches = generate_padded_batches(data_X, data_y, data_text, batch_size, word2index_lookup)
 
         tf.logging.info("Generated batches for the epoch!")
 
+
         for ind, batch in enumerate(batches):
             # train the batch and update parameters.
+
+            start = time.time()
             fd = {X: batch[0], y: batch[1],
                   text: batch[2], dropout_keep_prob: conf.dropout,
                   T: batch[2].shape[1],
@@ -416,7 +430,13 @@ with tf.Session(config=gpu_config) as sess:
             _, loss_value, aucpr_value, aucroc_value, summ = sess.run(
                 [train_op, loss, update_aucpr_op, update_aucroc_op, summ_tr], fd)
             loss_list.append(loss_value)
-            summ_writer.add_summary(summ, epoch)
+            end = time.time()
+            times = np.append(times, end-start)
+            if (ind + 1) % 250 == 0:
+                print("Finished:", ind + 1, "of", len(batches),"| Average time per batch (s):", np.mean(times))
+                times = np.array([])
+
+        summ_writer.add_summary(summ, epoch)
 
 
             # if ind % 200 == 0:
