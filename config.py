@@ -9,6 +9,7 @@ sys.path.append(os.getcwd())
 class Config():
     def __init__(self):
         self.basepath = './'
+        self.save_path = r'Z:\classes\cse517\project\ClinicalNotesICU' if socket.gethostname() != 'area51.cs.washington.edu' else  r'/data/ClinicalNotesICU'
         self.data = '../mimic3-benchmarks/data/' if socket.gethostname() != 'area51.cs.washington.edu' else r'/data/ClinicalNotesICU'
         self.timestep = 1.0
         self.normalizer_state = os.path.join(self.basepath, 'ihm_ts1.0.input_str-previous.start_time-zero.normalizer')
@@ -35,7 +36,7 @@ class Config():
         self.dropout = 0.9
         self.index2word_path = os.path.join(self.basepath, 'index2word.pkl') if socket.gethostname() != 'area51.cs.washington.edu' else os.path.join(self.data, 'index2word.pkl')
         self.wv_path = os.path.join(self.basepath, 'wv.model.vectors.npy') if socket.gethostname() != 'area51.cs.washington.edu' else os.path.join(self.data, 'wv.model.vectors.npy')
-        self.log_folder = os.path.join(self.basepath, 'logs') if socket.gethostname() != 'area51.cs.washington.edu' else os.path.join(self.data, 'logs')
+        self.log_folder = os.path.join(self.save_path, 'logs')
 
         #
         # self.model_path = os.path.join(self.basepath, 'wv.model')

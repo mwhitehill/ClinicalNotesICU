@@ -40,7 +40,7 @@ with open(results_csv_path, 'w') as handle:
     handle.write(header)
 
 model_name = args['model_name']
-assert model_name in ['baseline', 'avg_we', 'transformer', 'cnn', 'text_only']
+assert model_name in ['baseline', 'avg_we', 'transformer', 'cnn', 'text_only','gru']
 model_subname = args['model_subname']
 assert model_subname in ['none', 'text_cnn_lstm_fw','text_cnn_lstm_bi']
 
@@ -111,6 +111,11 @@ if model_name != 'baseline':
                 # Feed Forward
                 enc = utils.feedforward(enc, num_units=[4*hidden_units, hidden_units])
         text_embeddings = tf.reduce_mean(enc, axis=1)
+    elif model_name == 'gru':
+        tf.logging.info("GRU Model")
+        rnn_cell_text = rnn.GRUCell(num_units=200, name='gru_text')
+        rnn_outputs_text, _ = tf.nn.dynamic_rnn(rnn_cell_text, embeds, dtype=tf.float32)
+        rnn_outputs_text_last = rnn_outputs_text[:, -1, :]
     else:
         tf.logging.info("1D Convolution Model")
         sizes = range(2, 5)
@@ -161,6 +166,8 @@ if model_name == 'baseline':
     logit_X = mean_rnn_outputs
 elif model_name == 'text_only':
     logit_X = text_embeddings
+elif model_name == 'gru':
+    logit_X = tf.concat([rnn_outputs_text_last, mean_rnn_outputs], axis=1)
 else:
     if model_subname.startswith('text_cnn_lstm'):
         logit_X = tf.concat([rnn_outputs_text_last, mean_rnn_outputs], axis=1)
@@ -359,6 +366,7 @@ last_best_val_aucpr = -1
 gpu_config = tf.ConfigProto(device_count={'GPU': 1})
 #gpu_config.allow_soft_placement=True
 
+FIRST = True
 with tf.Session(config=gpu_config) as sess:
 
     summ_writer = tf.summary.FileWriter(log_folder, sess.graph)
@@ -366,23 +374,24 @@ with tf.Session(config=gpu_config) as sess:
     sess.run(init, {W_place: vectors})
 
     if args['TEST_MODEL']:
-        if not(model_subname.startswith('text_cnn_lstm')):
-            raise('Can only test model on text_cnn_lstm right now')
+
+        if not(model_name == 'gru' or model_subname.startswith('text_cnn_lstm')):
+            raise('Can only test model on gru or text_cnn_lstm right now')
         fd = {text: np.zeros((5,100)), dropout_keep_prob: conf.dropout}
 
-        t1, t2, t3 = sess.run([text_embeddings, rnn_outputs_text, rnn_outputs_text_last], fd)
+        t1, t2 = sess.run([embeds,rnn_outputs_text], fd) #rnn_outputs_text_last, text_embeddings, rnn_outputs_text
 
         print(t1.shape)
         print(t2.shape)
-        print(t3.shape)
+        # print(t3.shape)
         raise
 
 
     if bool(int(args['load_model'])):
-        saver.restore(sess, os.path.join('logs', args['checkpoint_path']))
-        last_best_val_aucpr, _ = validate(eval_data_X, eval_data_y, eval_data_text,
-                                          batch_size, word2index_lookup, sess, saver, last_best_val_aucpr,
-                                          loss, val_aucpr, val_aucroc, update_val_aucpr_op, update_val_aucroc_op, False)
+        saver.restore(sess, tf.train.latest_checkpoint(os.path.join(conf.log_folder, args['checkpoint_path'])))
+        # last_best_val_aucpr, _ = validate(eval_data_X, eval_data_y, eval_data_text,
+        #                                   batch_size, word2index_lookup, sess, saver, last_best_val_aucpr,
+        #                                   loss, val_aucpr, val_aucroc, update_val_aucpr_op, update_val_aucroc_op, False)
 
     if args['mode'] == 'eval':
         assert bool(int(args['load_model']))
@@ -421,7 +430,8 @@ with tf.Session(config=gpu_config) as sess:
         for ind, batch in enumerate(batches):
             # train the batch and update parameters.
 
-            start = time.time()
+            if FIRST:
+                start = time.time()
             fd = {X: batch[0], y: batch[1],
                   text: batch[2], dropout_keep_prob: conf.dropout,
                   T: batch[2].shape[1],
@@ -430,11 +440,15 @@ with tf.Session(config=gpu_config) as sess:
             _, loss_value, aucpr_value, aucroc_value, summ = sess.run(
                 [train_op, loss, update_aucpr_op, update_aucroc_op, summ_tr], fd)
             loss_list.append(loss_value)
-            end = time.time()
-            times = np.append(times, end-start)
+            if FIRST:
+                end = time.time()
+                times = np.append(times, end-start)
             if (ind + 1) % 250 == 0:
-                print("Finished:", ind + 1, "of", len(batches),"| Average time per batch (s):", np.mean(times))
-                times = np.array([])
+                print("Finished:", ind + 1, "of", len(batches))
+                if FIRST:
+                    print("Average time per batch (s): {:.4f}".format(np.mean(times)))
+                    times = np.array([])
+                    FIRST = False
 
         summ_writer.add_summary(summ, epoch)
 
