@@ -22,6 +22,7 @@ from mimic3models import common_utils
 from mimic3models.preprocessing import Discretizer, Normalizer
 from mimic3benchmark.readers import InHospitalMortalityReader
 from mimic3models.in_hospital_mortality import utils as ihm_utils
+from models.tacotron_models import TacotronEncoderCell, EncoderConvolutions, EncoderRNN
 
 tf.logging.set_verbosity(tf.logging.INFO)
 tf.logging.info("*** Loaded Data ***")
@@ -40,7 +41,7 @@ with open(results_csv_path, 'w') as handle:
     handle.write(header)
 
 model_name = args['model_name']
-assert model_name in ['baseline', 'avg_we', 'transformer', 'cnn', 'text_only','gru']
+assert model_name in ['baseline', 'avg_we', 'transformer', 'cnn', 'text_only','gru','tacotron']
 model_subname = args['model_subname']
 assert model_subname in ['none', 'text_cnn_lstm_fw','text_cnn_lstm_bi']
 
@@ -68,14 +69,14 @@ T = tf.placeholder(dtype=tf.int32)
 N = tf.placeholder(dtype=tf.int32)
 
 # Have a big enough gpu and simple enough model to fit word embeddings on gpu (all other cases, can't do that)
-if socket.gethostname() == 'area51.cs.washington.edu' and model_subname == 'none':
+# if socket.gethostname() == 'area51.cs.washington.edu' and model_subname == 'none':
+#     W_place = tf.placeholder(shape=vectors.shape, dtype = tf.float32, name='W_place')
+#     W = tf.Variable(W_place, name="W", trainable=False, shape = vectors.shape)
+# else:
+with tf.device('/CPU:0'):
     W_place = tf.placeholder(shape=vectors.shape, dtype = tf.float32, name='W_place')
-    W = tf.Variable(W_place, name="W", trainable=False, shape = vectors.shape)
-else:
-    with tf.device('/CPU:0'):
-        W_place = tf.placeholder(shape=vectors.shape, dtype = tf.float32, name='W_place')
-        W_place_concat = tf.concat([W_place,tf.constant(0, dtype=tf.float32, shape=(1,vectors.shape[1]))],axis=0)
-        W = tf.Variable(W_place_concat, name="W", trainable=False, shape = (vectors.shape[0]+1, vectors.shape[1]))
+    W_place_concat = tf.concat([W_place,tf.constant(0, dtype=tf.float32, shape=(1,vectors.shape[1]))],axis=0)
+    W = tf.Variable(W_place_concat, name="W", trainable=False, shape = (vectors.shape[0]+1, vectors.shape[1]))
 
 embeds = tf.nn.embedding_lookup(W, text)
 
@@ -115,6 +116,11 @@ if model_name != 'baseline':
         tf.logging.info("GRU Model")
         rnn_cell_text = rnn.GRUCell(num_units=200, name='gru_text')
         rnn_outputs_text, _ = tf.nn.dynamic_rnn(rnn_cell_text, embeds, dtype=tf.float32)
+        rnn_outputs_text_last = rnn_outputs_text[:, -1, :]
+    elif model_name == 'tacotron':
+        rnn_cell_text = TacotronEncoderCell(EncoderConvolutions(True, scope='encoder_convolutions'),
+                                           EncoderRNN(True, size=256,zoneout=.1, scope='encoder_LSTM'))
+        rnn_outputs_text = rnn_cell_text(embeds)
         rnn_outputs_text_last = rnn_outputs_text[:, -1, :]
     else:
         tf.logging.info("1D Convolution Model")
@@ -166,6 +172,9 @@ if model_name == 'baseline':
     logit_X = mean_rnn_outputs
 elif model_name == 'text_only':
     logit_X = text_embeddings
+elif model_name == 'tacotron':
+    logit_X = mean_rnn_outputs
+    logit_text = rnn_outputs_text_last
 elif model_name == 'gru':
     logit_X = tf.concat([rnn_outputs_text_last, mean_rnn_outputs], axis=1)
 else:
@@ -174,17 +183,27 @@ else:
     else:
         logit_X = tf.concat([text_embeddings, mean_rnn_outputs], axis=1)
 
-
 logits_regularizer = tf.contrib.layers.l2_regularizer(scale=0.01)
 logits = tf.layers.dense(inputs=logit_X, units=1, activation=None, use_bias=False,
-                         kernel_initializer=tf.contrib.layers.xavier_initializer(), kernel_regularizer=logits_regularizer)
-
-# logits = tf.layers.dense(inputs=mean_rnn_outputs,
-#                         units=1, activation=None, use_bias=False)
+                         kernel_initializer=tf.contrib.layers.xavier_initializer(),
+                         kernel_regularizer=logits_regularizer)
 logits = tf.squeeze(logits)
-loss = tf.math.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
-    labels=y, logits=logits) + tf.losses.get_regularization_loss(), name='celoss')
+loss = tf.math.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=logits), name='celoss')
 probs = tf.math.sigmoid(logits)
+
+if model_name == 'tacotron':
+    alpha = .75
+
+    logits_t = tf.layers.dense(inputs=logit_text, units=1, activation=None, kernel_initializer=tf.contrib.layers.xavier_initializer(),
+                               kernel_regularizer=logits_regularizer)
+    logits_t = tf.squeeze(logits_t)
+    loss_t = tf.math.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=logits_t), name='celoss_t')
+    probs_t = tf.math.sigmoid(logits_t)
+
+    loss = loss * alpha + loss_t * (1-alpha)
+    probs = probs * alpha + probs_t * (1-alpha)
+
+loss += tf.losses.get_regularization_loss()
 
 with tf.name_scope('train'):
     optimizer = tf.train.AdamOptimizer(learning_rate=conf.learning_rate)
@@ -375,14 +394,18 @@ with tf.Session(config=gpu_config) as sess:
 
     if args['TEST_MODEL']:
 
-        if not(model_name == 'gru' or model_subname.startswith('text_cnn_lstm')):
+        if not(model_name in ['gru','tacotron'] or model_subname.startswith('text_cnn_lstm')):
             raise('Can only test model on gru or text_cnn_lstm right now')
-        fd = {text: np.zeros((5,100)), dropout_keep_prob: conf.dropout}
+        # fd = {text: np.zeros((5,100)), dropout_keep_prob: conf.dropout}
+        #
+        # t1, t2 = sess.run([rnn_outputs_text,rnn_outputs_text_last], fd) #embeds, rnn_outputs_text_last, text_embeddings, rnn_outputs_text
 
-        t1, t2 = sess.run([embeds,rnn_outputs_text], fd) #rnn_outputs_text_last, text_embeddings, rnn_outputs_text
+        fd = {X: np.zeros((5,48,76)), y: np.zeros(5),text: np.zeros((5,100)), dropout_keep_prob: .2}
 
-        print(t1.shape)
-        print(t2.shape)
+        t1, t2 = sess.run([loss, probs],fd)
+
+        print(t1)
+        print(t2)
         # print(t3.shape)
         raise
 
