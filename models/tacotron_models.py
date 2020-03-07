@@ -146,14 +146,14 @@ class EncoderRNN:
             #     swap_memory=True)
             # outputs = tf.concat(outputs, axis=2)
 
-            outputs, (fw_state, bw_state) = tf.nn.dynamic_rnn(
+            outputs, final = tf.nn.dynamic_rnn(
                 self._fw_cell,
                 inputs,
                 sequence_length=input_lengths,
                 dtype=tf.float32,
                 swap_memory=True)
 
-            return  outputs # Concat and return forward + backward outputs
+            return final.h # Concat and return forward + backward outputs
 
 class TacotronEncoderCell(tf.nn.rnn_cell.RNNCell):
     """Tacotron 2 Encoder Cell

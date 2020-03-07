@@ -7,13 +7,9 @@ to determine if patients are at immediate risk of dying if not treated aggressiv
 
 import tensorflow as tf
 from tensorflow.contrib import rnn
-import pickle
+import pickle, random, socket, sys, os, time
 import numpy as np
 from datetime import datetime
-import random
-import socket
-import sys, os
-import time
 sys.path.append(os.getcwd())
 
 import utils
@@ -24,19 +20,27 @@ from mimic3benchmark.readers import InHospitalMortalityReader
 from mimic3models.in_hospital_mortality import utils as ihm_utils
 from models.tacotron_models import TacotronEncoderCell, EncoderConvolutions, EncoderRNN
 
+alpha = .9
+
 tf.logging.set_verbosity(tf.logging.INFO)
 tf.logging.info("*** Loaded Data ***")
 
 conf = utils.get_config()
 args = utils.get_args()
+# [datetime.now().strftime('%Y.%m.%d_%H-%M-%S'),
+folder_name = '_'.join(["ihm", args['name']])
 
-time_string = datetime.now().strftime('%Y.%m.%d_%H-%M-%S') + "_ihm"
-log_folder = os.path.join(conf.log_folder, time_string)
-os.makedirs(log_folder, exist_ok=True)
+for i in range(100):
+    folder_name_n = folder_name + '_' + str(i)
+    log_folder = os.path.join(conf.log_folder, folder_name_n)
+    if not(os.path.exists(log_folder)):
+        break
+
+os.makedirs(log_folder)
 
 log = utils.get_logger(log_folder, args['log_file'])
 results_csv_path = os.path.join(log_folder, 'results.csv')
-header = "epoch;val_loss;val_AUCPR;val_AUCROC\n"
+header = "epoch;loss_ts;loss_txt;loss;AUCPR;AUCROC;val_loss_ts;val_loss_txt;val_loss;val_AUCPR;val_AUCROC\n"
 with open(results_csv_path, 'w') as handle:
     handle.write(header)
 
@@ -64,6 +68,7 @@ batch_size = int(args['batch_size'])
 X = tf.placeholder(shape=(None, 48, 76), dtype=tf.float32, name='X')  # B*48*76
 y = tf.placeholder(shape=(None), dtype=tf.float32, name='y')
 text = tf.placeholder(shape=(None, None), dtype=tf.int32, name='text')  # B*L
+text_lens = tf.placeholder(shape=(None), dtype=tf.int32, name='text_lens')
 dropout_keep_prob = tf.placeholder(dtype=tf.float32, name='dropout_kp')
 T = tf.placeholder(dtype=tf.int32)
 N = tf.placeholder(dtype=tf.int32)
@@ -115,13 +120,13 @@ if model_name != 'baseline':
     elif model_name == 'gru':
         tf.logging.info("GRU Model")
         rnn_cell_text = rnn.GRUCell(num_units=200, name='gru_text')
-        rnn_outputs_text, _ = tf.nn.dynamic_rnn(rnn_cell_text, embeds, dtype=tf.float32)
-        rnn_outputs_text_last = rnn_outputs_text[:, -1, :]
+        rnn_outputs_text, rnn_outputs_text_last = tf.nn.dynamic_rnn(rnn_cell_text, embeds, dtype=tf.float32, sequence_length=text_lens)
+        rnn_outputs_text_last = tf.nn.dropout(rnn_outputs_text_last, keep_prob=dropout_keep_prob)
     elif model_name == 'tacotron':
         rnn_cell_text = TacotronEncoderCell(EncoderConvolutions(True, scope='encoder_convolutions'),
                                            EncoderRNN(True, size=256,zoneout=.1, scope='encoder_LSTM'))
-        rnn_outputs_text = rnn_cell_text(embeds)
-        rnn_outputs_text_last = rnn_outputs_text[:, -1, :]
+        rnn_outputs_text_last = rnn_cell_text(embeds, text_lens)
+        rnn_outputs_text_last = tf.nn.dropout(rnn_outputs_text_last, keep_prob=.8)
     else:
         tf.logging.info("1D Convolution Model")
         sizes = range(2, 5)
@@ -139,15 +144,16 @@ if model_name != 'baseline':
             # text_embeddings = tf.nn.dropout(text_embeddings, keep_prob=dropout_keep_prob)
             if model_subname == 'text_cnn_lstm_fw':
                 rnn_cell_text = rnn.LSTMCell(num_units=512, name='lstm_text')
-                rnn_outputs_text, _ = tf.nn.dynamic_rnn(rnn_cell_text, text_embeddings, time_major=False, dtype=tf.float32)
-                rnn_outputs_text_last = rnn_outputs_text[:,-1,:]
+                _, rnn_outputs_text_last = tf.nn.dynamic_rnn(rnn_cell_text, text_embeddings, time_major=False, dtype=tf.float32,
+                                                        sequence_length=text_lens)
+                rnn_outputs_text_last= rnn_outputs_text_last.h
                 rnn_outputs_text_last = tf.nn.dropout(rnn_outputs_text_last, keep_prob=dropout_keep_prob)
             else:
                 rnn_cell_text_fw = rnn.LSTMCell(num_units=256, name='lstm_text_fw')
                 rnn_cell_text_bw = rnn.LSTMCell(num_units=256, name='lstm_text_bw')
-                rnn_outputs_text, _ = tf.nn.bidirectional_dynamic_rnn(rnn_cell_text_fw, rnn_cell_text_bw, text_embeddings, time_major=False, dtype=tf.float32)
-                rnn_outputs_text = tf.concat(rnn_outputs_text, 2)
-                rnn_outputs_text_last = rnn_outputs_text[:, -1, :]
+                _, rnn_outputs_text_last = tf.nn.bidirectional_dynamic_rnn(rnn_cell_text_fw, rnn_cell_text_bw, text_embeddings,
+                                                                           time_major=False, dtype=tf.float32,sequence_length=text_lens)
+                rnn_outputs_text = tf.concat([rnn_outputs_text_last[0].h, rnn_outputs_text_last[1].h],1)#, #2)
                 rnn_outputs_text_last = tf.layers.dense(inputs=rnn_outputs_text_last, units=512, activation='relu',
                                                         kernel_regularizer=tf.contrib.layers.l2_regularizer(scale=0.01))
                 rnn_outputs_text_last = tf.nn.dropout(rnn_outputs_text_last, keep_prob=dropout_keep_prob)
@@ -172,16 +178,14 @@ if model_name == 'baseline':
     logit_X = mean_rnn_outputs
 elif model_name == 'text_only':
     logit_X = text_embeddings
-elif model_name == 'tacotron':
-    logit_X = mean_rnn_outputs
-    logit_text = rnn_outputs_text_last
-elif model_name == 'gru':
-    logit_X = tf.concat([rnn_outputs_text_last, mean_rnn_outputs], axis=1)
-else:
-    if model_subname.startswith('text_cnn_lstm'):
-        logit_X = tf.concat([rnn_outputs_text_last, mean_rnn_outputs], axis=1)
+elif model_name in ['gru','tacotron'] or model_subname.startswith('text_cnn_lstm'):
+    if args['split_loss']:
+        logit_X = mean_rnn_outputs
+        logit_text = rnn_outputs_text_last
     else:
-        logit_X = tf.concat([text_embeddings, mean_rnn_outputs], axis=1)
+        logit_X = tf.concat([rnn_outputs_text_last, mean_rnn_outputs], axis=1)
+else:
+    logit_X = tf.concat([text_embeddings, mean_rnn_outputs], axis=1)
 
 logits_regularizer = tf.contrib.layers.l2_regularizer(scale=0.01)
 logits = tf.layers.dense(inputs=logit_X, units=1, activation=None, use_bias=False,
@@ -191,24 +195,26 @@ logits = tf.squeeze(logits)
 loss = tf.math.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=logits), name='celoss')
 probs = tf.math.sigmoid(logits)
 
-if model_name == 'tacotron':
-    alpha = .75
-
+if args['split_loss']:
     logits_t = tf.layers.dense(inputs=logit_text, units=1, activation=None, kernel_initializer=tf.contrib.layers.xavier_initializer(),
                                kernel_regularizer=logits_regularizer)
     logits_t = tf.squeeze(logits_t)
     loss_t = tf.math.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=logits_t), name='celoss_t')
     probs_t = tf.math.sigmoid(logits_t)
 
-    loss = loss * alpha + loss_t * (1-alpha)
-    probs = probs * alpha + probs_t * (1-alpha)
+    loss_full = loss * alpha + loss_t * (1-alpha)
+    probs_full = probs * alpha + probs_t * (1-alpha)
+else:
+    loss_t=tf.constant(0)
+    loss_full = loss
+    probs_full = probs
 
-loss += tf.losses.get_regularization_loss()
+loss_full += tf.losses.get_regularization_loss()
 
 with tf.name_scope('train'):
     optimizer = tf.train.AdamOptimizer(learning_rate=conf.learning_rate)
     train_op = optimizer.minimize(
-        loss=loss,
+        loss=loss_full,
         global_step=tf.train.get_global_step())
 
 with tf.name_scope('train_metric'):
@@ -222,7 +228,7 @@ with tf.name_scope('valid_metric'):
     val_aucpr, update_val_aucpr_op = tf.metrics.auc(labels=y, predictions=probs,
                                                     curve="PR")
 
-loss_summary = tf.summary.scalar(name='loss', tensor=loss)
+loss_summary = tf.summary.scalar(name='loss', tensor=loss_full)
 aucroc_summary = tf.summary.scalar(name='aucroc', tensor=aucroc)
 aucpr_summary = tf.summary.scalar(name='aucpr', tensor=aucpr)
 summ_tr = tf.summary.merge([loss_summary, aucroc_summary, aucpr_summary])
@@ -305,22 +311,27 @@ if args['mode'] == 'test':
     del test_raw
     del test_text
 
+lens_all = []
 
 def generate_tensor_text(t, w2i_lookup):
+    global lens_all
     t_new = []
     max_len = -1
+
+    lens_all += [len(text) for text in t]
+
     for text in t:
         tokens = list(map(lambda x: lookup(w2i_lookup, x), str(text).split()))
         if conf.max_len > 0:
-            tokens = tokens[:conf.max_len]
+            tokens = tokens[-conf.max_len:] if args['flip_text_start'] else tokens[:conf.max_len]
         t_new.append(tokens)
         max_len = max(max_len, len(tokens))
     pad_token = w2i_lookup['<pad>']
+    lens = [len(t_n) for t_n in t_new]
     for i in range(len(t_new)):
         if len(t_new[i]) < max_len:
             t_new[i] += [pad_token] * (max_len - len(t_new[i]))
-    return np.array(t_new)
-
+    return (np.array(t_new), np.array(lens))
 
 def generate_padded_batches(x, y, t, bs, w2i_lookup):
     batches = []
@@ -329,9 +340,12 @@ def generate_padded_batches(x, y, t, bs, w2i_lookup):
         end = min(begin+batch_size, len(t))
         x_slice = np.stack(x[begin:end])
         y_slice = np.stack(y[begin:end])
-        t_slice = generate_tensor_text(t[begin:end], w2i_lookup)
-        batches.append((x_slice, y_slice, t_slice))
+        t_slice, lens = generate_tensor_text(t[begin:end], w2i_lookup)
+        batches.append((x_slice, y_slice, t_slice, lens))
         begin += batch_size
+        if args['TEST']:
+            break
+    # print("MAX LEN", max(lens_all), np.median(lens_all), np.mean(lens_all))
     return batches
 
 
@@ -340,17 +354,21 @@ def validate(data_X_val, data_y_val, data_text_val, batch_size, word2index_looku
              update_val_aucpr_op, update_val_aucroc_op, save, epoch=0, summ_writer=None):
     val_batches = generate_padded_batches(data_X_val, data_y_val, data_text_val, batch_size, word2index_lookup)
     loss_list = []
+    loss_list_ts = []
+    loss_list_txt = []
     aucpr_obj = utils.AUCPR()
     #sess.run(tf.variables_initializer([v for v in tf.local_variables() if 'valid_metric' in v.name]))
     sess.run(tf.local_variables_initializer(), {W_place: vectors})
     for v_batch in val_batches:
         fd = {X: v_batch[0], y: v_batch[1],
-              text: v_batch[2], dropout_keep_prob: 1,
+              text: v_batch[2], text_lens: v_batch[3], dropout_keep_prob: 1,
               T: v_batch[2].shape[1],
               N: v_batch[2].shape[0]}
-        loss_value, _, _, probablities = sess.run(
-            [loss, update_val_aucpr_op, update_val_aucroc_op, probs], fd)
+        loss_value, loss_value_ts, loss_value_txt,_, _, probablities = sess.run(
+            [loss_full, loss, loss_t, update_val_aucpr_op, update_val_aucroc_op, probs], fd)
         loss_list.append(loss_value)
+        loss_list_ts.append(loss_value_ts)
+        loss_list_txt.append(loss_value_txt)
         aucpr_obj.add(probablities, v_batch[1])
 
     # summ_loss_val_res = sess.run(summ_val_loss, {loss_summary_val: np.mean(loss_list)})
@@ -362,10 +380,10 @@ def validate(data_X_val, data_y_val, data_text_val, batch_size, word2index_looku
         summ_writer.add_summary(summ_aucpr_val, epoch)
         summ_writer.add_summary(summ_aucroc_val, epoch)
         with open(results_csv_path, 'a') as handle:
-            handle.write("{};{};{};{}\n".format(epoch, np.mean(loss_list), final_aucpr, final_aucroc))
+            handle.write("{};{};{};{};{}\n".format(np.mean(loss_list_ts),np.mean(loss_list_txt),np.mean(loss_list), final_aucpr, final_aucroc))
 
-    tf.logging.info("Validation Loss: %f - AUCPR: %f - AUCPR-SKLEARN: %f - AUCROC: %f" %
-                    (np.mean(loss_list), final_aucpr, aucpr_obj.get(), final_aucroc))
+    tf.logging.info("Val Loss TS: %f - Val Loss Txt: %f - Validation Loss: %f - AUCPR: %f - AUCPR-SKLEARN: %f - AUCROC: %f" %
+                    (np.mean(loss_list_ts), np.mean(loss_list_txt), np.mean(loss_list), final_aucpr, aucpr_obj.get(), final_aucroc))
 
     # aucpr_obj.save()
     changed = False
@@ -378,7 +396,7 @@ def validate(data_X_val, data_y_val, data_text_val, batch_size, word2index_looku
 
 init = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
 print(len(tf.local_variables()))
-saver = tf.train.Saver()
+saver = tf.train.Saver(max_to_keep=1)
 last_best_val_aucpr = -1
 
 
@@ -394,19 +412,22 @@ with tf.Session(config=gpu_config) as sess:
 
     if args['TEST_MODEL']:
 
-        if not(model_name in ['gru','tacotron'] or model_subname.startswith('text_cnn_lstm')):
-            raise('Can only test model on gru or text_cnn_lstm right now')
+        with open('example_batch.pkl', 'rb') as handle:
+            batch = pickle.load( handle)
+
+        # if not(model_name in ['gru','tacotron'] or model_subname.startswith('text_cnn_lstm')):
+        #     raise('Can only test model on gru or text_cnn_lstm right now')
         # fd = {text: np.zeros((5,100)), dropout_keep_prob: conf.dropout}
         #
         # t1, t2 = sess.run([rnn_outputs_text,rnn_outputs_text_last], fd) #embeds, rnn_outputs_text_last, text_embeddings, rnn_outputs_text
 
-        fd = {X: np.zeros((5,48,76)), y: np.zeros(5),text: np.zeros((5,100)), dropout_keep_prob: .2}
+        fd = {X: batch[0], y: batch[1],
+              text: batch[2], text_lens: batch[3], dropout_keep_prob: conf.dropout}
 
+        # t1, t2,  t3 = sess.run([embeds, text_lens, rnn_outputs_text_last],fd) #loss, probs
         t1, t2 = sess.run([loss, probs],fd)
-
         print(t1)
         print(t2)
-        # print(t3.shape)
         raise
 
 
@@ -442,6 +463,8 @@ with tf.Session(config=gpu_config) as sess:
         data_X, data_y, data_text = zip(*data)
 
         loss_list = []
+        loss_list_ts = []
+        loss_list_txt = []
 
         del data
 
@@ -455,14 +478,18 @@ with tf.Session(config=gpu_config) as sess:
 
             if FIRST:
                 start = time.time()
+
             fd = {X: batch[0], y: batch[1],
-                  text: batch[2], dropout_keep_prob: conf.dropout,
+                  text: batch[2], text_lens: batch[3], dropout_keep_prob: conf.dropout,
                   T: batch[2].shape[1],
                   N: batch[2].shape[0]}
 
-            _, loss_value, aucpr_value, aucroc_value, summ = sess.run(
-                [train_op, loss, update_aucpr_op, update_aucroc_op, summ_tr], fd)
+            _, loss_value,loss_value_ts,loss_value_txt, aucpr_value, aucroc_value, summ = sess.run(
+                [train_op, loss_full, loss, loss_t, update_aucpr_op, update_aucroc_op, summ_tr], fd)
             loss_list.append(loss_value)
+            loss_list_ts.append(loss_value_ts)
+            loss_list_txt.append(loss_value_txt)
+
             if FIRST:
                 end = time.time()
                 times = np.append(times, end-start)
@@ -483,8 +510,12 @@ with tf.Session(config=gpu_config) as sess:
         current_aucroc = sess.run(aucroc)
         current_aucpr = sess.run(aucpr)
 
-        tf.logging.info("Loss: %f - AUCPR: %f - AUCROC: %f" %
-                        (np.mean(loss_list), current_aucpr, current_aucroc))
+        with open(results_csv_path, 'a') as handle:
+            handle.write("{};{};{};{};{};{};".format(epoch, np.mean(loss_list_ts),np.mean(loss_list_txt), np.mean(loss_list), current_aucpr, current_aucroc))
+
+
+        tf.logging.info("Loss_ts: %f - Loss_txt: %f - Loss: %f - AUCPR: %f - AUCROC: %f" %
+                        (np.mean(loss_list_ts), np.mean(loss_list_txt), np.mean(loss_list), current_aucpr, current_aucroc))
 
         # reset aucroc and aucpr local variables
         # sess.run(tf.variables_initializer(
