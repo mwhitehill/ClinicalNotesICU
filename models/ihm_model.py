@@ -45,11 +45,9 @@ with open(results_csv_path, 'w') as handle:
     handle.write(header)
 
 model_name = args['model_name']
-assert model_name in ['baseline', 'avg_we', 'transformer', 'cnn', 'text_only','gru','tacotron']
-model_subname = args['model_subname']
-assert model_subname in ['none', 'text_cnn_lstm_fw','text_cnn_lstm_bi']
+assert model_name in ['baseline', 'avg_we', 'transformer', 'cnn', 'text_only','cnn_gru','gru','tacotron']
 
-print("MODEL_NAME:", model_name, "MODEL_SUBNAME:",model_subname)
+tf.logging.info("MODEL_NAME: {}".format(model_name))
 
 vectors, word2index_lookup = utils.get_embedding_dict(conf, args['TEST'])
 lookup = utils.lookup
@@ -127,47 +125,64 @@ if model_name != 'baseline':
                                            EncoderRNN(True, size=256,zoneout=.1, scope='encoder_LSTM'))
         rnn_outputs_text_last = rnn_cell_text(embeds, text_lens)
         rnn_outputs_text_last = tf.nn.dropout(rnn_outputs_text_last, keep_prob=.8)
+    elif model_name == 'cnn_gru':
+        start = 2
+        end = 4
+        sizes = range(start, end)
+        pool_size = 50
+        filters = 256
+        result_tensors = []
+
+        for ngram_size in sizes:
+            # 256 -> 2,3 best yet.
+            text_conv1d = tf.layers.conv1d(inputs=embeds, filters=filters, kernel_size=ngram_size,
+                                           strides=1, padding='same', dilation_rate=1,
+                                           activation='relu', name='Text_Conv_1D_N{}'.format(ngram_size),
+                                           kernel_regularizer=tf.contrib.layers.l2_regularizer(scale=0.01))
+            # text_conv1d = tf.reduce_max(text_conv1d, axis=1, keepdims=False)
+            result_tensors.append(text_conv1d)
+        text_embeddings = tf.concat(result_tensors, axis=-1)
+        text_embeddings_pooled = tf.nn.max_pool1d(input=text_embeddings, ksize=pool_size, strides=pool_size,
+                                                  padding='SAME', name='Text_Max_Pool_1D')
+
+        text_lens_div = tf.cast(tf.math.floor(tf.math.divide(text_lens,pool_size)),dtype=tf.int32)
+        rnn_cell_text = rnn.GRUCell(num_units=(end-start)*filters, name='gru_text')
+        rnn_outputs_text, rnn_outputs_text_last = tf.nn.dynamic_rnn(rnn_cell_text, text_embeddings_pooled, dtype=tf.float32,
+                                                                    sequence_length=text_lens_div)
+        rnn_outputs_text_last = tf.nn.dropout(rnn_outputs_text_last, keep_prob=dropout_keep_prob)
+
+        # if model_subname == 'text_cnn_lstm_fw':
+        #     rnn_cell_text = rnn.LSTMCell(num_units=512, name='lstm_text')
+        #     _, rnn_outputs_text_last = tf.nn.dynamic_rnn(rnn_cell_text, text_embeddings, time_major=False, dtype=tf.float32,
+        #                                             sequence_length=text_lens)
+        #     rnn_outputs_text_last= rnn_outputs_text_last.h
+        #     rnn_outputs_text_last = tf.nn.dropout(rnn_outputs_text_last, keep_prob=dropout_keep_prob)
+        # else:
+        #     rnn_cell_text_fw = rnn.LSTMCell(num_units=256, name='lstm_text_fw')
+        #     rnn_cell_text_bw = rnn.LSTMCell(num_units=256, name='lstm_text_bw')
+        #     _, rnn_outputs_text_last = tf.nn.bidirectional_dynamic_rnn(rnn_cell_text_fw, rnn_cell_text_bw, text_embeddings,
+        #                                                                time_major=False, dtype=tf.float32,sequence_length=text_lens)
+        #     rnn_outputs_text = tf.concat([rnn_outputs_text_last[0].h, rnn_outputs_text_last[1].h],1)#, #2)
+        #     rnn_outputs_text_last = tf.layers.dense(inputs=rnn_outputs_text_last, units=512, activation='relu',
+        #                                             kernel_regularizer=tf.contrib.layers.l2_regularizer(scale=0.01))
+        #     rnn_outputs_text_last = tf.nn.dropout(rnn_outputs_text_last, keep_prob=dropout_keep_prob)
+
+
     else:
         tf.logging.info("1D Convolution Model")
         sizes = range(2, 5)
         result_tensors = []
-        if model_subname.startswith('text_cnn_lstm'):
-            for ngram_size in sizes:
-                # 256 -> 2,3 best yet.
-                text_conv1d = tf.layers.conv1d(inputs=embeds, filters=256, kernel_size=ngram_size,
-                                               strides=1, padding='same', dilation_rate=1,
-                                               activation='relu', name='Text_Conv_1D_N{}'.format(ngram_size),
-                                               kernel_regularizer=tf.contrib.layers.l2_regularizer(scale=0.01))
-                # text_conv1d = tf.reduce_max(text_conv1d, axis=1, keepdims=False)
-                result_tensors.append(text_conv1d)
-            text_embeddings = tf.concat(result_tensors, axis=-1)
-            # text_embeddings = tf.nn.dropout(text_embeddings, keep_prob=dropout_keep_prob)
-            if model_subname == 'text_cnn_lstm_fw':
-                rnn_cell_text = rnn.LSTMCell(num_units=512, name='lstm_text')
-                _, rnn_outputs_text_last = tf.nn.dynamic_rnn(rnn_cell_text, text_embeddings, time_major=False, dtype=tf.float32,
-                                                        sequence_length=text_lens)
-                rnn_outputs_text_last= rnn_outputs_text_last.h
-                rnn_outputs_text_last = tf.nn.dropout(rnn_outputs_text_last, keep_prob=dropout_keep_prob)
-            else:
-                rnn_cell_text_fw = rnn.LSTMCell(num_units=256, name='lstm_text_fw')
-                rnn_cell_text_bw = rnn.LSTMCell(num_units=256, name='lstm_text_bw')
-                _, rnn_outputs_text_last = tf.nn.bidirectional_dynamic_rnn(rnn_cell_text_fw, rnn_cell_text_bw, text_embeddings,
-                                                                           time_major=False, dtype=tf.float32,sequence_length=text_lens)
-                rnn_outputs_text = tf.concat([rnn_outputs_text_last[0].h, rnn_outputs_text_last[1].h],1)#, #2)
-                rnn_outputs_text_last = tf.layers.dense(inputs=rnn_outputs_text_last, units=512, activation='relu',
-                                                        kernel_regularizer=tf.contrib.layers.l2_regularizer(scale=0.01))
-                rnn_outputs_text_last = tf.nn.dropout(rnn_outputs_text_last, keep_prob=dropout_keep_prob)
-        else:
-            for ngram_size in sizes:
-                # 256 -> 2,3 best yet.
-                text_conv1d = tf.layers.conv1d(inputs=embeds, filters=256, kernel_size=ngram_size,
-                                               strides=1, padding='same', dilation_rate=1,
-                                               activation='relu', name='Text_Conv_1D_N{}'.format(ngram_size),
-                                               kernel_regularizer=tf.contrib.layers.l2_regularizer(scale=0.01))
-                text_conv1d = tf.reduce_max(text_conv1d, axis=1, keepdims=False)
-                result_tensors.append(text_conv1d)
-            text_embeddings = tf.concat(result_tensors, axis=1)
-            text_embeddings = tf.nn.dropout(text_embeddings, keep_prob=dropout_keep_prob)
+
+        for ngram_size in sizes:
+            # 256 -> 2,3 best yet.
+            text_conv1d = tf.layers.conv1d(inputs=embeds, filters=256, kernel_size=ngram_size,
+                                           strides=1, padding='same', dilation_rate=1,
+                                           activation='relu', name='Text_Conv_1D_N{}'.format(ngram_size),
+                                           kernel_regularizer=tf.contrib.layers.l2_regularizer(scale=0.01))
+            text_conv1d = tf.reduce_max(text_conv1d, axis=1, keepdims=False)
+            result_tensors.append(text_conv1d)
+        text_embeddings = tf.concat(result_tensors, axis=1)
+        text_embeddings = tf.nn.dropout(text_embeddings, keep_prob=dropout_keep_prob)
 
 rnn_cell = rnn.LSTMCell(num_units=256, name='lstm_main')
 rnn_outputs, _ = tf.nn.dynamic_rnn(rnn_cell, X, time_major=False, dtype=tf.float32)
@@ -178,7 +193,7 @@ if model_name == 'baseline':
     logit_X = mean_rnn_outputs
 elif model_name == 'text_only':
     logit_X = text_embeddings
-elif model_name in ['gru','tacotron'] or model_subname.startswith('text_cnn_lstm'):
+elif model_name in ['cnn_gru','gru','tacotron']:
     if args['split_loss']:
         logit_X = mean_rnn_outputs
         logit_text = rnn_outputs_text_last
@@ -415,19 +430,16 @@ with tf.Session(config=gpu_config) as sess:
         with open('example_batch.pkl', 'rb') as handle:
             batch = pickle.load( handle)
 
-        # if not(model_name in ['gru','tacotron'] or model_subname.startswith('text_cnn_lstm')):
-        #     raise('Can only test model on gru or text_cnn_lstm right now')
-        # fd = {text: np.zeros((5,100)), dropout_keep_prob: conf.dropout}
-        #
-        # t1, t2 = sess.run([rnn_outputs_text,rnn_outputs_text_last], fd) #embeds, rnn_outputs_text_last, text_embeddings, rnn_outputs_text
-
         fd = {X: batch[0], y: batch[1],
               text: batch[2], text_lens: batch[3], dropout_keep_prob: conf.dropout}
 
-        # t1, t2,  t3 = sess.run([embeds, text_lens, rnn_outputs_text_last],fd) #loss, probs
-        t1, t2 = sess.run([loss, probs],fd)
-        print(t1)
+        t1, t2, t3,t4,t5 = sess.run([text_embeddings, text_lens, text_lens_div,text_embeddings_pooled,rnn_outputs_text_last ],fd) #loss, probs rnn_outputs_text_last
+        # t1, t2 = sess.run([loss, probs],fd)
+        print(t1.shape)
         print(t2)
+        print(t3)
+        print(t4.shape)
+        print(t5.shape)
         raise
 
 
