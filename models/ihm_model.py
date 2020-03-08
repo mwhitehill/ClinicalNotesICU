@@ -146,17 +146,16 @@ if model_name != 'baseline':
                                                   padding='SAME', name='Text_Max_Pool_1D')
 
         text_lens_div = tf.cast(tf.math.floor(tf.math.divide(text_lens,pool_size)),dtype=tf.int32)
-        rnn_cell_text = rnn.GRUCell(num_units=(end-start)*filters, name='gru_text')
-        rnn_outputs_text, rnn_outputs_text_last = tf.nn.dynamic_rnn(rnn_cell_text, text_embeddings_pooled, dtype=tf.float32,
-                                                                    sequence_length=text_lens_div)
-        rnn_outputs_text_last = tf.nn.dropout(rnn_outputs_text_last, keep_prob=dropout_keep_prob)
+        # rnn_cell_text = rnn.GRUCell(num_units=(end-start)*filters, name='gru_text')
+        # rnn_outputs_text, rnn_outputs_text_last = tf.nn.dynamic_rnn(rnn_cell_text, text_embeddings_pooled, dtype=tf.float32,
+        #                                                             sequence_length=text_lens_div)
+        # rnn_outputs_text_last = tf.nn.dropout(rnn_outputs_text_last, keep_prob=dropout_keep_prob)
 
-        # if model_subname == 'text_cnn_lstm_fw':
-        #     rnn_cell_text = rnn.LSTMCell(num_units=512, name='lstm_text')
-        #     _, rnn_outputs_text_last = tf.nn.dynamic_rnn(rnn_cell_text, text_embeddings, time_major=False, dtype=tf.float32,
-        #                                             sequence_length=text_lens)
-        #     rnn_outputs_text_last= rnn_outputs_text_last.h
-        #     rnn_outputs_text_last = tf.nn.dropout(rnn_outputs_text_last, keep_prob=dropout_keep_prob)
+        rnn_cell_text = rnn.LSTMCell(num_units=(end-start)*filters, name='lstm_text')
+        _, rnn_outputs_text_last = tf.nn.dynamic_rnn(rnn_cell_text, text_embeddings_pooled, time_major=False, dtype=tf.float32,
+                                                sequence_length=text_lens_div)
+        rnn_outputs_text_last= rnn_outputs_text_last.h
+        rnn_outputs_text_last = tf.nn.dropout(rnn_outputs_text_last, keep_prob=dropout_keep_prob)
         # else:
         #     rnn_cell_text_fw = rnn.LSTMCell(num_units=256, name='lstm_text_fw')
         #     rnn_cell_text_bw = rnn.LSTMCell(num_units=256, name='lstm_text_bw')
