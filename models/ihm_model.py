@@ -131,6 +131,9 @@ if model_name != 'baseline':
         sizes = range(start, end)
         pool_size = 50
         filters = 256
+        rnn_nodes = 8
+        GRU = False
+        dropout = dropout_keep_prob
         result_tensors = []
 
         for ngram_size in sizes:
@@ -146,16 +149,18 @@ if model_name != 'baseline':
                                                   padding='SAME', name='Text_Max_Pool_1D')
 
         text_lens_div = tf.cast(tf.math.floor(tf.math.divide(text_lens,pool_size)),dtype=tf.int32)
-        # rnn_cell_text = rnn.GRUCell(num_units=(end-start)*filters, name='gru_text')
-        # rnn_outputs_text, rnn_outputs_text_last = tf.nn.dynamic_rnn(rnn_cell_text, text_embeddings_pooled, dtype=tf.float32,
-        #                                                             sequence_length=text_lens_div)
-        # rnn_outputs_text_last = tf.nn.dropout(rnn_outputs_text_last, keep_prob=dropout_keep_prob)
 
-        rnn_cell_text = rnn.LSTMCell(num_units=(end-start)*filters, name='lstm_text')
-        _, rnn_outputs_text_last = tf.nn.dynamic_rnn(rnn_cell_text, text_embeddings_pooled, time_major=False, dtype=tf.float32,
+        if GRU:
+            rnn_cell_text = rnn.GRUCell(num_units=rnn_nodes, name='gru_text')
+            rnn_outputs_text, rnn_outputs_text_last = tf.nn.dynamic_rnn(rnn_cell_text, text_embeddings_pooled, dtype=tf.float32,
+                                                                    sequence_length=text_lens_div)
+        else:
+            rnn_cell_text = rnn.LSTMCell(num_units=rnn_nodes, name='lstm_text')
+            _, rnn_outputs_text_last = tf.nn.dynamic_rnn(rnn_cell_text, text_embeddings_pooled, dtype=tf.float32,
                                                 sequence_length=text_lens_div)
-        rnn_outputs_text_last= rnn_outputs_text_last.h
-        rnn_outputs_text_last = tf.nn.dropout(rnn_outputs_text_last, keep_prob=dropout_keep_prob)
+            rnn_outputs_text_last= rnn_outputs_text_last.h
+            
+        rnn_outputs_text_last = tf.nn.dropout(rnn_outputs_text_last, keep_prob=dropout)#dropout_keep_prob)
         # else:
         #     rnn_cell_text_fw = rnn.LSTMCell(num_units=256, name='lstm_text_fw')
         #     rnn_cell_text_bw = rnn.LSTMCell(num_units=256, name='lstm_text_bw')
@@ -337,7 +342,7 @@ def generate_tensor_text(t, w2i_lookup):
     for text in t:
         tokens = list(map(lambda x: lookup(w2i_lookup, x), str(text).split()))
         if conf.max_len > 0:
-            tokens = tokens[-conf.max_len:] if args['flip_text_start'] else tokens[:conf.max_len]
+            tokens = tokens[:conf.max_len] if args['no_flip_text_start'] else tokens[-conf.max_len:]
         t_new.append(tokens)
         max_len = max(max_len, len(tokens))
     pad_token = w2i_lookup['<pad>']
@@ -400,12 +405,10 @@ def validate(data_X_val, data_y_val, data_text_val, batch_size, word2index_looku
                     (np.mean(loss_list_ts), np.mean(loss_list_txt), np.mean(loss_list), final_aucpr, aucpr_obj.get(), final_aucroc))
 
     # aucpr_obj.save()
-    changed = False
-    if final_aucpr > last_best_val_aucpr:
-        changed = True
-        if save:
-            save_path = saver.save(sess, os.path.join(log_folder, 'ckpt_e{}'.format(epoch)))
-            tf.logging.info("Best Model saved in path: %s" % save_path)
+    changed = True if final_aucpr > last_best_val_aucpr else False
+    if (epoch + 1) % 20 == 0 and save:
+        save_path = saver.save(sess, os.path.join(log_folder, 'ckpt_e{}'.format(epoch)))
+        tf.logging.info("Model saved in path: %s" % save_path)
     return max(last_best_val_aucpr, final_aucpr), changed
 
 init = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())

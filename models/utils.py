@@ -35,7 +35,7 @@ def get_args():
     parser.add_argument('--gpu_list', default="1,2", help="Which gpu numbers to use. Should be in format: 1,2 ")
     parser.add_argument('--name',  help="Name of model for logging", required=True)
     parser.add_argument("--split_loss", action='store_true', default=False)
-    parser.add_argument("--flip_text_start", action='store_true', default=False)
+    parser.add_argument("--no_flip_text_start", action='store_false', default=True)
     args = vars(parser.parse_args())
     assert args['mode'] in ['train', 'test', 'eval']
     args['decay'] = float(args['decay'])
