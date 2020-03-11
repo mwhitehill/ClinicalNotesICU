@@ -129,8 +129,8 @@ if model_name != 'baseline':
         start = 2
         end = 4
         sizes = range(start, end)
-        pool_size = 50
-        filters = 256
+        pool_size = 200
+        filters = 16
         rnn_nodes = 8
         GRU = False
         dropout = dropout_keep_prob
@@ -159,7 +159,7 @@ if model_name != 'baseline':
             _, rnn_outputs_text_last = tf.nn.dynamic_rnn(rnn_cell_text, text_embeddings_pooled, dtype=tf.float32,
                                                 sequence_length=text_lens_div)
             rnn_outputs_text_last= rnn_outputs_text_last.h
-            
+
         rnn_outputs_text_last = tf.nn.dropout(rnn_outputs_text_last, keep_prob=dropout)#dropout_keep_prob)
         # else:
         #     rnn_cell_text_fw = rnn.LSTMCell(num_units=256, name='lstm_text_fw')
@@ -174,18 +174,39 @@ if model_name != 'baseline':
 
     else:
         tf.logging.info("1D Convolution Model")
-        sizes = range(2, 5)
+        start =2
+        end = 4
+        sizes = range(start,end)#5)
+        filters = 256
+        filters_2d = 4
+        pool_size = 250
         result_tensors = []
+        result_tensors_am = []
+        pool=False
 
         for ngram_size in sizes:
             # 256 -> 2,3 best yet.
-            text_conv1d = tf.layers.conv1d(inputs=embeds, filters=256, kernel_size=ngram_size,
+            text_conv1d = tf.layers.conv1d(inputs=embeds, filters=filters, kernel_size=ngram_size,
                                            strides=1, padding='same', dilation_rate=1,
                                            activation='relu', name='Text_Conv_1D_N{}'.format(ngram_size),
                                            kernel_regularizer=tf.contrib.layers.l2_regularizer(scale=0.01))
-            text_conv1d = tf.reduce_max(text_conv1d, axis=1, keepdims=False)
+            if pool:
+                text_conv1d = tf.nn.max_pool1d(input=text_conv1d, ksize=pool_size, strides=pool_size,
+                                                      padding='SAME', name='Text_Max_Pool_1D')
+            else:
+                text_conv1d = tf.reduce_max(text_conv1d, axis=1, keepdims=False)
             result_tensors.append(text_conv1d)
-        text_embeddings = tf.concat(result_tensors, axis=1)
+
+        text_embeddings = tf.concat(result_tensors, axis=-1) #axis=1)
+
+        if pool:
+            # text_embeddings = tf.reshape(text_embeddings, [-1, int(conf.max_len / pool_size) * filters * (end-start)])
+
+            nodes = int(conf.max_len / pool_size)
+            text_embeddings = tf.layers.conv2d(inputs=tf.expand_dims(text_embeddings,-1), filters=filters_2d, kernel_size = (nodes,1), strides=(nodes,1), padding='same',
+                                  activation='relu', name='Text_Conv_2D',kernel_regularizer=tf.contrib.layers.l2_regularizer(scale=0.01))
+            text_embeddings = tf.reshape(text_embeddings, [-1, filters * (end-start) * filters_2d])
+
         text_embeddings = tf.nn.dropout(text_embeddings, keep_prob=dropout_keep_prob)
 
 rnn_cell = rnn.LSTMCell(num_units=256, name='lstm_main')
@@ -349,7 +370,10 @@ def generate_tensor_text(t, w2i_lookup):
     lens = [len(t_n) for t_n in t_new]
     for i in range(len(t_new)):
         if len(t_new[i]) < max_len:
-            t_new[i] += [pad_token] * (max_len - len(t_new[i]))
+            if args['no_flip_text_start']:
+                t_new[i] += [pad_token] * (max_len - len(t_new[i]))
+            else:
+                t_new[i]  = [pad_token] * (max_len - len(t_new[i])) + t_new[i]
     return (np.array(t_new), np.array(lens))
 
 def generate_padded_batches(x, y, t, bs, w2i_lookup):
@@ -435,13 +459,12 @@ with tf.Session(config=gpu_config) as sess:
         fd = {X: batch[0], y: batch[1],
               text: batch[2], text_lens: batch[3], dropout_keep_prob: conf.dropout}
 
-        t1, t2, t3,t4,t5 = sess.run([text_embeddings, text_lens, text_lens_div,text_embeddings_pooled,rnn_outputs_text_last ],fd) #loss, probs rnn_outputs_text_last
+        # t1, t2, t3,t4,t5 = sess.run([text_embeddings, text_lens, text_lens_div,text_embeddings_pooled,rnn_outputs_text_last ],fd) #loss, probs rnn_outputs_text_last
         # t1, t2 = sess.run([loss, probs],fd)
+        t1,t2= sess.run([text_conv1d, text_embeddings], fd) #loss, probs rnn_outputs_text_last, text_embeddings
+
         print(t1.shape)
-        print(t2)
-        print(t3)
-        print(t4.shape)
-        print(t5.shape)
+        print(t2.shape)
         raise
 
 
