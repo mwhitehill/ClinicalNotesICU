@@ -5,37 +5,36 @@ such as bloodwork and checking vital signs,
 to determine if patients are at immediate risk of dying if not treated aggressively.
 '''
 
-import tensorflow as tf
-from tensorflow.contrib import rnn
-import pickle, random, socket, sys, os, time
-import numpy as np
-from datetime import datetime
-sys.path.append(os.getcwd())
+from mimic
 
-import utils
-from config import Config
-from mimic3models import common_utils
+from models.tacotron_models import TacotronEncoderCell, EncoderConvolutions, EncoderRNN
+from mimic3models.in_hospital_mortality import utils as ihm_utils
 from mimic3models.preprocessing import Discretizer, Normalizer
 from mimic3benchmark.readers import InHospitalMortalityReader
-from mimic3models.in_hospital_mortality import utils as ihm_utils
-from models.tacotron_models import TacotronEncoderCell, EncoderConvolutions, EncoderRNN
+import pickle, random, socket, sys, os, time
+from tensorflow.contrib import rnn
+from models import utils
+from config import Config
+import tensorflow as tf
+import numpy as np
 
 alpha = .9
 
+# initialize stuff ##
+
+args = utils.get_args()
+conf = Config()
+
+# set tf logging, log folder
 tf.logging.set_verbosity(tf.logging.INFO)
 tf.logging.info("*** Loaded Data ***")
 
-conf = utils.get_config()
-args = utils.get_args()
-# [datetime.now().strftime('%Y.%m.%d_%H-%M-%S'),
 folder_name = '_'.join(["ihm", args['name']])
-
 for i in range(100):
     folder_name_n = folder_name + '_' + str(i)
     log_folder = os.path.join(conf.log_folder, folder_name_n)
     if not(os.path.exists(log_folder)):
         break
-
 os.makedirs(log_folder)
 
 log = utils.get_logger(log_folder, args['log_file'])

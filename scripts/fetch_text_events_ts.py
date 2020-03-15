@@ -9,7 +9,7 @@ args = Config()
 with open(args.evalpicklepath, 'rb') as f:
     data = pickle.load(f)
 
-treader = TextReader(args.textdata)
+treader = TextReader(args.text_path)
 train_text = treader.read_all_text_events(data[3])
 #val_raw = treader.read_all_text_concat(val_raw[''])
 print(len(train_text))

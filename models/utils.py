@@ -1,31 +1,25 @@
-import json
-import pandas as pd
-import os
-import tensorflow as tf
+from matplotlib import pyplot
 from sklearn import metrics
+from config import Config
+import tensorflow as tf
+import numpy as np
+import argparse
 import logging
 import pickle
-import argparse
-import sys
-import numpy as np
-from matplotlib import pyplot
-from gensim.models import KeyedVectors
-from datetime import datetime
 import socket
-sys.path.insert(0, '..')
-import config
+import json
+import os
+
 
 def get_config():
-    return config.Config()
+    return Config()
+
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--load_model", help="1/0 to specify whether to load the model", default="0")
-    parser.add_argument("--number_epoch", default="100")
-    parser.add_argument("--batch_size", default="5")
-    parser.add_argument("--log_file", default='log')
-    parser.add_argument("--checkpoint_path", help="Path for checkpointing", default='ckpt')
-    parser.add_argument("--evaluate_only")
+    # parser.add_argument("--load_model", help="1/0 to specify whether to load the model", default="0")
+    # parser.add_argument("--checkpoint_path", help="Path for checkpointing", default='ckpt')
+    # parser.add_argument("--evaluate_only")
     parser.add_argument("--model_name", default='cnn', help="'baseline', 'avg_we', 'transformer', 'cnn', 'text_only','cnn_gru','gru', 'tacotron'")
     parser.add_argument("--mode", help="train/test/eval", default='train')
     parser.add_argument("--problem_type", help="los/decom")
@@ -36,6 +30,7 @@ def get_args():
     parser.add_argument('--name',  help="Name of model for logging", required=True)
     parser.add_argument("--split_loss", action='store_true', default=False)
     parser.add_argument("--no_flip_text_start", action='store_false', default=True)
+
     args = vars(parser.parse_args())
     assert args['mode'] in ['train', 'test', 'eval']
     args['decay'] = float(args['decay'])
@@ -44,10 +39,8 @@ def get_args():
         print("Setting gpus to:", args['gpu_list'])
     elif args['gpu_list'] == "-1":
         os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-    # else:
-    #     os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-
     return args
+
 
 def get_embedding_dict(conf, TEST):
 

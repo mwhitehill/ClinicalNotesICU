@@ -44,7 +44,7 @@ cont_channels = [i for (i, x) in enumerate(
 
 # choose here which columns to standardize
 normalizer = Normalizer(fields=cont_channels)
-normalizer_state = args.normalizer_state
+normalizer_state = args.norm_state
 if normalizer_state is None:
     normalizer_state = 'ihm_ts{}.input_str:{}.start_time:zero.normalizer'.format(
         args.timestep, args.imputation)
@@ -67,7 +67,7 @@ print(len(train_raw['names']))
 5. train and evaluate.
 '''
 
-treader = TextReader(args.textdata)
+treader = TextReader(args.text_path)
 train_text = treader.read_all_text_concat(train_raw['names'])
 #val_raw = treader.read_all_text_concat(val_raw[''])
 print(len(train_text))
