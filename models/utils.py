@@ -1,35 +1,31 @@
 from matplotlib import pyplot
 from sklearn import metrics
-from config import Config
 import tensorflow as tf
 import numpy as np
 import argparse
 import logging
 import pickle
 import socket
+import arrow
 import json
+import csv
 import os
-
-
-def get_config():
-    return Config()
 
 
 def get_args():
     parser = argparse.ArgumentParser()
-    # parser.add_argument("--load_model", help="1/0 to specify whether to load the model", default="0")
-    # parser.add_argument("--checkpoint_path", help="Path for checkpointing", default='ckpt')
-    # parser.add_argument("--evaluate_only")
+    parser.add_argument("--load_model", help="1/0 to specify whether to load the model", default="0")
+    parser.add_argument("--checkpoint_path", help="Path for checkpointing", default='ckpt')
+    parser.add_argument("--evaluate_only")
     parser.add_argument("--model_name", default='cnn', help="'baseline', 'avg_we', 'transformer', 'cnn', 'text_only','cnn_gru','gru', 'tacotron'")
     parser.add_argument("--mode", help="train/test/eval", default='train')
     parser.add_argument("--problem_type", help="los/decom")
     parser.add_argument("--decay", default="0")
-    parser.add_argument("--TEST", action='store_true', default=False)
-    parser.add_argument("--TEST_MODEL", action='store_true', default=False, help='Just test the model graph')
     parser.add_argument('--gpu_list', default="1,2", help="Which gpu numbers to use. Should be in format: 1,2 ")
-    parser.add_argument('--name',  help="Name of model for logging", required=True)
     parser.add_argument("--split_loss", action='store_true', default=False)
     parser.add_argument("--no_flip_text_start", action='store_false', default=True)
+    parser.add_argument("--TEST", action='store_true', default=False)
+    parser.add_argument("--TEST_MODEL", action='store_true', default=False, help='Just test the model graph')
 
     args = vars(parser.parse_args())
     assert args['mode'] in ['train', 'test', 'eval']
@@ -61,23 +57,6 @@ def get_embedding_dict(conf, TEST):
     return vectors, word2index_lookup
 
 
-def get_logger(log_folder, log_file):
-    # get TF logger
-    log = logging.getLogger('tensorflow')
-    log.setLevel(logging.DEBUG)
-
-    # create formatter and add it to the handlers
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-
-    # create file handler which logs even debug messages
-    fh = logging.FileHandler(os.path.join(log_folder, log_file))
-    fh.setLevel(logging.INFO)
-    fh.setFormatter(formatter)
-    log.addHandler(fh)
-    return log
-
-
 def lookup(w2i_lookup, x):
     if x in w2i_lookup:
         return w2i_lookup[x]
@@ -85,7 +64,41 @@ def lookup(w2i_lookup, x):
         return len(w2i_lookup)
 
 
-class AUCPR():
+class CustomLogger:
+    """class for storing model results and runtime logs"""
+
+    results_header = "epoch;loss_ts;loss_txt;loss;AUCPR;AUCROC;val_loss_ts;val_loss_txt;val_loss;val_AUCPR;val_AUCROC\n"
+
+    def __init__(self, path, problem_name, model_name):
+        self.folder = self.create_log_folder(path, problem_name, model_name)
+        self.res_filename = os.path.join(self.folder, 'results.csv')
+        self.write_result(CustomLogger.results_header, header=True)
+
+    def write_result(self, row, header=False):
+        with open(self.res_filename, 'w+' if header else 'a+') as f:
+            f.write(row)
+        return
+
+    @staticmethod
+    def create_log_folder(log_path, problem_name, model_name):
+        folder_name = '-'.join([str(arrow.utcnow().timestamp), problem_name, model_name])
+        log_path = os.path.join(log_path, folder_name)
+        if not os.path.exists(log_path):
+            os.makedirs(log_path)
+        return log_path
+
+    @staticmethod
+    def configure_logger(log_folder, log_file):
+        # create formatter and add it to the handlers
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        # create file handler which logs even debug messages
+        fh = logging.FileHandler(os.path.join(log_folder, log_file))
+        fh.setLevel(logging.INFO)
+        fh.setFormatter(formatter)
+        return
+
+
+class AUCPR:
     def __init__(self, *args, **kwargs):
         self.y_true = None
         self.y_pred = None
@@ -113,7 +126,7 @@ class AUCPR():
             pickle.dump((self.y_pred, self.y_true), f, pickle.HIGHEST_PROTOCOL)
 
 
-class MetricPerHour():
+class MetricPerHour:
     def __init__(self):
         self.y_true_hr = {}
         self.pred_hr = {}

@@ -1,3 +1,22 @@
+from models.tacotron_models import TacotronEncoderCell, EncoderConvolutions, EncoderRNN
+import pickle, random, sys, os, time
+from tensorflow.contrib import rnn
+from config import Config
+from models import utils
+import tensorflow as tf
+import numpy as np
+import arrow
+
+conf = Config()
+
+try:
+    sys.path.append(os.path.join(conf.project_root, 'mimic3-benchmarks'))
+    from mimic3models.in_hospital_mortality import utils as ihm_utils
+    from mimic3models.preprocessing import Discretizer, Normalizer
+    from mimic3benchmark.readers import InHospitalMortalityReader
+except ImportError as ie:
+    raise ImportError("Could not import mimic 3 benchmark files. Please check step 3 of the README file and ensure you followed all instructions correctly.")
+
 '''
 In intensive care units, where patients come in with a wide range of health conditions, 
 triaging relies heavily on clinical judgment. ICU staff run numerous physiological tests, 
@@ -5,59 +24,37 @@ such as bloodwork and checking vital signs,
 to determine if patients are at immediate risk of dying if not treated aggressively.
 '''
 
-from mimic
-
-from models.tacotron_models import TacotronEncoderCell, EncoderConvolutions, EncoderRNN
-from mimic3models.in_hospital_mortality import utils as ihm_utils
-from mimic3models.preprocessing import Discretizer, Normalizer
-from mimic3benchmark.readers import InHospitalMortalityReader
-import pickle, random, socket, sys, os, time
-from tensorflow.contrib import rnn
-from models import utils
-from config import Config
-import tensorflow as tf
-import numpy as np
-
 alpha = .9
 
-# initialize stuff ##
-
+# read arguments
 args = utils.get_args()
-conf = Config()
 
-# set tf logging, log folder
+# check model type
+model_type = args['model_name']
+assert model_type in ['baseline', 'avg_we', 'transformer', 'cnn', 'text_only', 'cnn_gru', 'gru', 'tacotron']
+
+# set tf logging, show model details
 tf.logging.set_verbosity(tf.logging.INFO)
 tf.logging.info("*** Loaded Data ***")
+tf.logging.info("MODEL_NAME: {}".format(model_type))
+tf.logging.info(str(vars(conf)))
+tf.logging.info(str(args))
 
-folder_name = '_'.join(["ihm", args['name']])
-for i in range(100):
-    folder_name_n = folder_name + '_' + str(i)
-    log_folder = os.path.join(conf.log_folder, folder_name_n)
-    if not(os.path.exists(log_folder)):
-        break
-os.makedirs(log_folder)
+# use logger to save model results
+logger = utils.CustomLogger(conf.log_path, "IHM", model_type)
 
-log = utils.get_logger(log_folder, args['log_file'])
-results_csv_path = os.path.join(log_folder, 'results.csv')
-header = "epoch;loss_ts;loss_txt;loss;AUCPR;AUCROC;val_loss_ts;val_loss_txt;val_loss;val_AUCPR;val_AUCROC\n"
-with open(results_csv_path, 'w') as handle:
-    handle.write(header)
 
-model_name = args['model_name']
-assert model_name in ['baseline', 'avg_we', 'transformer', 'cnn', 'text_only','cnn_gru','gru','tacotron']
-
-tf.logging.info("MODEL_NAME: {}".format(model_name))
+# model initialization ##
 
 vectors, word2index_lookup = utils.get_embedding_dict(conf, args['TEST'])
 lookup = utils.lookup
+
 # let's set pad token to zero padding instead of random padding.
 # might be better for attention as it will give minimum value.
 if conf.padding_type == 'Zero':
     tf.logging.info("Zero Padding..")
     vectors[lookup(word2index_lookup, '<pad>')] = 0
 
-tf.logging.info(str(vars(conf)))
-tf.logging.info(str(args))
 
 number_epoch = int(args['number_epoch'])
 batch_size = int(args['batch_size'])

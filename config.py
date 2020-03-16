@@ -1,22 +1,20 @@
 import os
 import socket
 
-# Make sure can find the other repos
-# sys.path.append(os.path.join(os.path.dirname(os.getcwd()), 'mimic3-benchmarks'))
-# sys.path.append(os.getcwd())
-
 
 class Config:
-
+    """
+    a class to store hyper parameters and filepath settings.
+    """
     PROJECT_NAME = "ClinicalNotesICU"
 
     def __init__(self):
         # paths ##
         self.project_root = self.get_project_root()
-        self.data_path = os.path.join(self.project_root, '../mimic3-benchmarks/data/')
+        self.data_path = os.path.join(self.project_root, 'mimic3-benchmarks/data/')
 
-        self.decompensation_path = os.path.join(self.data_path, 'length-decompensation-stay')
-        self.ihm_path = os.path.join(self.data, 'in-hospital-mortality')
+        self.decompensation_path = os.path.join(self.data_path, 'decompensation')
+        self.ihm_path = os.path.join(self.data_path, 'in-hospital-mortality')
         self.los_path = os.path.join(self.data_path, 'length-of-stay')
 
         self.norm_state = os.path.join(self.project_root, 'ihm_ts1.0.input_str-previous.start_time-zero.normalizer')
@@ -27,11 +25,11 @@ class Config:
         self.starttime_path = os.path.join(self.data_path, 'starttime.pkl')
         self.test_textdata_fixed = os.path.join(self.data_path, 'root', 'test_text_fixed')
         self.test_starttime_path = os.path.join(self.data_path, 'test_starttime.pkl')
-        self.log_folder = os.path.join(self.save_path, 'logs')
+        self.save_path = os.path.join(self.project_root, 'results')
+        self.log_path = os.path.join(self.save_path, 'logs')
 
         self.index2word_path = os.path.join(self.project_root, 'index2word.pkl') if socket.gethostname() != 'area51.cs.washington.edu' else os.path.join(self.data, 'index2word.pkl')
         self.wv_path = os.path.join(self.project_root, 'wv.model.vectors.npy') if socket.gethostname() != 'area51.cs.washington.edu' else os.path.join(self.data, 'wv.model.vectors.npy')
-        self.save_path = r'Z:\classes\cse517\project\ClinicalNotesICU' if socket.gethostname() != 'area51.cs.washington.edu' else  r'/data/ClinicalNotesICU'
         self.data = '../mimic3-benchmarks/data/' if socket.gethostname() != 'area51.cs.washington.edu' else r'/data/ClinicalNotesICU'
 
         # hyper parameters ##
@@ -56,6 +54,14 @@ class Config:
         self.num_epochs = 100
         self.batch_size = 5
 
+        self.init_directories()
+
+    def init_directories(self):
+        if not os.path.exists(self.save_path):
+            os.makedirs(self.save_path)
+        if not os.path.exists(self.log_path):
+            os.makedirs(self.log_path)
+        return
 
     @staticmethod
     def get_project_root():
