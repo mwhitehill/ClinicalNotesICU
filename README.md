@@ -1,4 +1,7 @@
-This is code for the paper, "Using Clinical Notes with Time Series Data for ICU Management" at EMNLP 2019 by Swaraj Khadanga, Karan Aggarwal, Shafiq R. Joty, Jaideep Srivastava. 
+This is code for the paper, "Using Clinical Notes with Time Series Data for ICU Management" at EMNLP 2019 by Swaraj Khadanga, Karan Aggarwal, Shafiq R. Joty, Jaideep Srivastava.
+
+This code has been modified for by Matt Whitehill, Jacob Peplinski, and Yue Guo.
+ 
 
 # Steps
 Clone https://github.com/YerevaNN/mimic3-benchmarks and run all data generation steps to generate training data without text features.

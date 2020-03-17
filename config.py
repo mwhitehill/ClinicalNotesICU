@@ -53,6 +53,7 @@ class Config:
         self.max_len = 1000
         self.num_epochs = 100
         self.batch_size = 5
+        self.alpha = 0.9
 
         self.init_directories()
 

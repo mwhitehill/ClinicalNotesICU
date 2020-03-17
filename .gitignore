@@ -7,3 +7,4 @@ logs
 mimic3-benchmarks/**
 .DS_Store
 venv/
+results/

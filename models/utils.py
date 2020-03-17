@@ -15,6 +15,9 @@ import os
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--load_model", help="1/0 to specify whether to load the model", default="0")
+    parser.add_argument("--big_gpu", help="1/0 to specify whether your GPU has > 4gb memory", default="0")
+    parser.add_argument("--number_epoch", default="10")
+    parser.add_argument("--batch_size", default="5")
     parser.add_argument("--checkpoint_path", help="Path for checkpointing", default='ckpt')
     parser.add_argument("--evaluate_only")
     parser.add_argument("--model_name", default='cnn', help="'baseline', 'avg_we', 'transformer', 'cnn', 'text_only','cnn_gru','gru', 'tacotron'")
