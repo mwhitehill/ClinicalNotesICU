@@ -1,11 +1,12 @@
+## Using Clinical Notes with Time Series Data for ICU Management
+
 This is code for the paper, "Using Clinical Notes with Time Series Data for ICU Management" 
 at EMNLP 2019 by Swaraj Khadanga, Karan Aggarwal, Shafiq R. Joty, Jaideep Srivastava.
 
 This code has been modified by Matt Whitehill, Jacob Peplinski, and Yue Guo.
 
 The purpose of this project is to explore the use of textual information in three ICU prediction tasks.
-All experiments are based on the MIMIC-III clinical database which is required before this code can be used.  
- 
+All experiments are based on the MIMIC-III clinical database which is required before this code can be used.
 
 # To Run This Code
 - Apply for access to the MIMIC-III Database [here](https://mimic.physionet.org/).
@@ -23,7 +24,7 @@ All experiments are based on the MIMIC-III clinical database which is required b
 ## Configuration
 1. Update all paths and configuration in config.py file.
 
-## Models.
+## Models
 - For IHM run ihm_model.py file under tf_trad.
 
     Number of train_raw_names:  14681 <br>
